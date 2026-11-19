@@ -1,0 +1,12 @@
+node_modules/
+host/dist/
+tv/.gradle/
+tv/.kotlin/
+tv/build/
+tv/app/build/
+tv/local.properties
+*.iml
+.idea/
+.vscode/
+*.log
+release/

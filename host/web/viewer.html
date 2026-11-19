@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EsteefCast Viewer</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+  <video id="video" autoplay playsinline></video>
+  <div id="overlay" class="overlay">
+    <img src="/icon.png" alt="" class="logo">
+    <div id="message" class="message">Connecting…</div>
+    <div class="by">EsteefCast · by Esteef.Ai</div>
+  </div>
+  <button id="unmute" class="unmute" hidden>Click for sound</button>
+  <div id="stats" class="stats" hidden></div>
+  <script src="/viewer.js"></script>
+</body>
+</html>

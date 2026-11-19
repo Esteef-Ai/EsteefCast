@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>EsteefCast Test Pattern</title>
+  <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Moving bars + a frame counter, so every captured frame differs (60 fps test),
+// and a quiet tone so the system-audio path has something to carry.
+const c = document.getElementById('c');
+const g = c.getContext('2d');
+let frame = 0;
+const noise = document.createElement('canvas');
+function draw() {
+  c.width = innerWidth; c.height = innerHeight;
+  const w = c.width, h = c.height;
+  g.fillStyle = '#1d2024'; g.fillRect(0, 0, w, h);
+  const x = (frame * 8) % w;
+  g.fillStyle = '#c4a062'; g.fillRect(x, 0, w / 10, h);
+  g.fillStyle = '#7e9c74'; g.fillRect(w - x, h / 3, w / 10, h / 3);
+  // A block of fresh noise every frame, so the encoder has real work to do
+  // (flat colours compress to almost nothing and hide bitrate problems).
+  const nw = 64, nh = 36;
+  const img = g.createImageData(nw, nh);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = Math.random() * 255;
+    img.data[i] = n; img.data[i + 1] = n * 0.9; img.data[i + 2] = n * 0.7; img.data[i + 3] = 255;
+  }
+  noise.width = nw; noise.height = nh;
+  noise.getContext('2d').putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(noise, w / 2, h / 2, w / 2, h / 2);
+  g.fillStyle = '#e4e0d8'; g.font = `bold ${Math.round(h / 6)}px Consolas, monospace`;
+  g.fillText(String(frame), w / 20, h / 4);
+  frame++;
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+try {
+  const ac = new AudioContext();
+  const o = ac.createOscillator(); const gain = ac.createGain();
+  o.frequency.value = 440; gain.gain.value = 0.05;
+  o.connect(gain).connect(ac.destination); o.start();
+} catch (e) {}
+</script>
+</body>
+</html>

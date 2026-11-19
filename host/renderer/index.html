@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>EsteefCast</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="../assets/icon.png" alt="" class="logo">
+      <div>
+        <div class="brand-name">EsteefCast</div>
+        <div class="brand-by">by Esteef.Ai</div>
+      </div>
+    </div>
+    <div id="status" class="status idle">Not sharing</div>
+  </header>
+
+  <main class="layout">
+    <section class="panel sources">
+      <div class="panel-head">
+        <h2>What to share</h2>
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-kind="screen" role="tab">Screens</button>
+          <button class="tab" data-kind="window" role="tab">Windows</button>
+        </div>
+        <button id="refresh" class="ghost" title="Refresh the list">Refresh</button>
+      </div>
+      <div id="grid" class="grid" aria-live="polite"></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Settings</h2>
+        <label class="field">
+          <span>Quality</span>
+          <select id="quality">
+            <option value="720p60">720p · 60 fps</option>
+            <option value="1080p60">1080p · 60 fps (recommended)</option>
+            <option value="1440p60">1440p · 60 fps</option>
+            <option value="2160p60">4K · 60 fps (cable or fast Wi-Fi)</option>
+          </select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="audio" checked>
+          <span>Send PC sound to the TV</span>
+        </label>
+        <button id="share" class="primary" disabled>Choose something to share</button>
+        <p id="shareNote" class="note"></p>
+      </section>
+
+      <section class="panel">
+        <h2>TVs watching <span id="viewerCount" class="count">0</span></h2>
+        <ul id="viewers" class="list"><li class="empty">No TVs connected yet.</li></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Connect a TV</h2>
+        <p class="note">Open EsteefCast on the TV. This PC shows up on its own. If it doesn't, choose <b>Enter address</b> on the TV and type:</p>
+        <div id="addresses" class="addresses"></div>
+        <label class="field">
+          <span>This PC's name on the TV</span>
+          <input id="pcName" maxlength="40" spellcheck="false">
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Allowed TVs</h2>
+        <ul id="allowed" class="list"><li class="empty">None yet.</li></ul>
+      </section>
+    </aside>
+  </main>
+
+  <script src="rtc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
