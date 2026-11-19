@@ -37,7 +37,7 @@ An Esteef.Ai product. Share a PC's screen and sound to a TV, at home or at a fri
 2. **Create invite code** makes a code like `BEAR-4821`. It works once, within 24 hours.
 3. The friend's TV chooses **Add a friend's PC** and sends the code (`/viewer`, `redeem`). The PC creates a 256-bit key for that TV and keeps only its hash. The TV stores the key.
 4. To watch, the TV sends `open {hostId, deviceId, token}`. The PC checks the key and accepts. After that, the service passes the normal protocol messages (`hello`, `offer`, `answer`, `candidate`, …) both ways without reading them.
-5. Both sides use the service's STUN (UDP 3478) to learn their public addresses, so the video goes straight from PC to TV.
+5. Both sides use the service's STUN (UDP 47901) to learn their public addresses, so the video goes straight from PC to TV.
 6. If both networks block direct connections, the TV says so plainly. A TURN relay and UPnP port mapping are possible later additions.
 
 Each friend's stream is limited by the PC's **Upload limit per friend** (default 8 Mbps), and starts at 2.5 Mbps.

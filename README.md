@@ -67,7 +67,7 @@ The PC encodes in hardware where it can (NVIDIA NVENC, AMD AMF, Intel Quick Sync
 | TCP 47801 | Connection setup and the web viewer |
 | UDP (dynamic) | Video and audio (WebRTC, encrypted) |
 
-The EsteefCast service (only for friends outside the home) uses TCP 47900 and UDP 3478. See `rendezvous/`.
+The EsteefCast service (only for friends outside the home) uses TCP 47900 and UDP 47901. See `rendezvous/`.
 
 ## Building from source
 

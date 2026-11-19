@@ -16,7 +16,7 @@ const { WebSocketServer } = require('ws');
 
 const DIR = process.env.ECAST_RZ_DIR || __dirname;
 const file = (n) => path.join(DIR, n);
-const config = { port: 47900, stunPort: 3478, publicHost: '', ...readJson('config.json', {}) };
+const config = { port: 47900, stunPort: 47901, publicHost: '', ...readJson('config.json', {}) };
 const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_INVITES_PER_HOST = 10;
 
