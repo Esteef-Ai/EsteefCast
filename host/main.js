@@ -116,6 +116,7 @@ function startServer() {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(hostInfo()));
     }
+    if (url.pathname.startsWith('/roku/') || url.pathname.startsWith('/hls/')) return rokuRoute(req, res, url);
     const f = WEB_FILES[url.pathname];
     if (!f) { res.writeHead(404); return res.end('Not found'); }
     fs.readFile(path.join(WEB_DIR, f[0]), (err, buf) => {
@@ -268,9 +269,11 @@ function registerIpc() {
   ipcMain.handle('settings-get', () => ({
     ...settings, ips: localAddresses(), port: WEB_PORT, version: app.getVersion(),
     test: TEST ? { autoshare: env.ESTEEFCAST_AUTOSHARE || '', quality: env.ESTEEFCAST_QUALITY || '' } : null,
+    // Experiments only: override bitrate behaviour, e.g. {"start":0.3,"min":0.25,"degrade":"balanced"}.
+    tune: TEST && env.ESTEEFCAST_TUNE ? env.ESTEEFCAST_TUNE : '',
   }));
   ipcMain.handle('settings-set', (_e, patch) => {
-    const keys = ['name', 'quality', 'audio', 'sourceId', 'maxViewers'];
+    const keys = ['name', 'quality', 'audio', 'sourceId', 'maxViewers', 'rokuQuality'];
     for (const k of keys) if (patch && k in patch) settings[k] = patch[k];
     settings.name = String(settings.name || os.hostname()).slice(0, 40);
     writeJson('settings.json', settings);
@@ -303,6 +306,7 @@ function registerIpc() {
   }));
   ipcMain.on('share-state', (_e, state) => {
     share = { active: !!state.active, title: String(state.title || '') };
+    if (!share.active) hlsReset();
     for (const v of approvedViewers()) send(v, { type: 'state', sharing: share.active, title: share.title });
     svcSend({ type: 'state', sharing: share.active, title: share.title, name: settings.name });
     updateTray();
@@ -316,6 +320,21 @@ function registerIpc() {
     if (v) v.close();
   });
   ipcMain.handle('allowed-list', () => allowed);
+  ipcMain.on('hls-segment', (_e, seg) => {
+    if (!hls.wanted || !seg || !seg.bytes) return;
+    const last = hls.segments[hls.segments.length - 1];
+    const discontinuity = !!seg.discontinuity;
+    if (discontinuity && last) hls.discontinuities += 1;
+    hls.segments.push({ seq: seg.seq, duration: Number(seg.duration) || 1, bytes: Buffer.from(seg.bytes), discontinuity, disc: hls.discontinuities });
+    while (hls.segments.length > 10) hls.segments.shift();
+    hls.info = seg.info || hls.info;
+  });
+  ipcMain.on('hls-error', (_e, msg) => {
+    hls.error = String(msg || 'encoder error');
+    rokuLog('PC', 'Roku stream stopped: ' + hls.error);
+    hls.wanted = false;
+    hls.segments = [];
+  });
   ipcMain.handle('allowed-forget', (_e, deviceId) => {
     delete allowed[deviceId];
     writeJson('allowed.json', allowed);
@@ -480,6 +499,141 @@ function onServiceMessage(m) {
   }
 }
 
+// ---------- Roku (HLS) ----------
+// A Roku can't do WebRTC, so it plays an HLS stream: the renderer encodes 1-second
+// MPEG-TS chunks while any Roku is fetching, and we serve them here.
+const hls = { wanted: false, segments: [], lastRequest: 0, error: '', info: null, discontinuities: 0, watchers: new Map() };
+
+function hlsReset() {
+  if (hls.wanted) toRenderer('hls-stop');
+  hls.wanted = false;
+  hls.segments = [];
+}
+
+function hlsTouch(deviceId) {
+  hls.lastRequest = Date.now();
+  hls.watchers.set(deviceId, Date.now());
+  if (!hls.wanted && share.active) {
+    hls.wanted = true;
+    hls.error = '';
+    hls.segments = [];
+    toRenderer('hls-start', { preset: settings.rokuQuality || '1080p60' });
+  }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, t] of hls.watchers) if (now - t > 10000) hls.watchers.delete(id);
+  if (hls.wanted && now - hls.lastRequest > 20000) hlsReset(); // no Roku has asked for 20 s
+  toRenderer('roku-status', { watching: hls.watchers.size, running: hls.wanted, info: hls.info, error: hls.error });
+}, 2000);
+
+function rokuLog(who, text) {
+  try {
+    const f = dataFile('roku-log.txt');
+    try { if (fs.statSync(f).size > 2 * 1024 * 1024) fs.renameSync(f, dataFile('roku-log.old.txt')); } catch {}
+    const lines = String(text).split(/\r?\n/).filter(Boolean).map((l) => `${new Date().toISOString()}  [${who}] ${l}`);
+    fs.appendFileSync(f, lines.join('\n') + '\n');
+  } catch {}
+}
+
+function rokuDevice(token) {
+  if (!token) return null;
+  const h = sha256(token);
+  for (const [id, a] of Object.entries(allowed)) if (a.kind === 'roku' && a.tokenHash && sameHash(a.tokenHash, h)) return { id, ...a };
+  return null;
+}
+
+let rokuChain = Promise.resolve();
+function rokuApprove(deviceId, name, ip) {
+  if (TEST || (allowed[deviceId] && allowed[deviceId].kind === 'roku')) return Promise.resolve(true);
+  const p = rokuChain.then(async () => {
+    if (allowed[deviceId] && allowed[deviceId].kind === 'roku') return true;
+    showWindow();
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', title: APP_NAME,
+      message: `The Roku "${name}" wants to watch this PC.`,
+      detail: `It is at ${ip} on your network.\nRokus watch with a 1-3 second delay. If you allow it, it will be remembered.`,
+      buttons: ['Allow', 'Deny'], defaultId: 0, cancelId: 1, noLink: true,
+    });
+    return r.response === 0;
+  });
+  rokuChain = p.catch(() => {});
+  return p;
+}
+
+function sendJson(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(obj));
+}
+
+function playlist(token) {
+  const segs = hls.segments.slice(-6);
+  const target = Math.max(1, Math.round(Math.max(...segs.map((x) => x.duration), 1))); // EXTINF rounds to this; 1 s keeps Rokus close to live
+  const lines = ['#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${target}`,
+    `#EXT-X-MEDIA-SEQUENCE:${segs.length ? segs[0].seq : 0}`, `#EXT-X-DISCONTINUITY-SEQUENCE:${segs.length ? segs[0].disc : 0}`];
+  segs.forEach((x, i) => {
+    if (x.discontinuity && i > 0) lines.push('#EXT-X-DISCONTINUITY');
+    lines.push(`#EXTINF:${x.duration.toFixed(3)},`, `seg-${x.seq}.ts?t=${encodeURIComponent(token)}`);
+  });
+  return lines.join('\n') + '\n';
+}
+
+async function rokuRoute(req, res, url) {
+  const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const token = url.searchParams.get('t') || '';
+
+  if (url.pathname === '/roku/hello') {
+    const deviceId = String(url.searchParams.get('id') || '').slice(0, 64);
+    const name = String(url.searchParams.get('name') || 'Roku').replace(/[\r\n]/g, ' ').slice(0, 60);
+    if (!deviceId) return sendJson(res, 400, { ok: false, reason: 'no-id' });
+    const ok = await rokuApprove(deviceId, name, ip);
+    if (!ok) { rokuLog(name, `denied (${ip})`); return sendJson(res, 200, { ok: false, reason: 'denied', hostName: settings.name }); }
+    const t = crypto.randomBytes(24).toString('base64url');
+    allowed[deviceId] = { name, kind: 'roku', tokenHash: sha256(t), added: (allowed[deviceId] && allowed[deviceId].added) || new Date().toISOString() };
+    if (!TEST) writeJson('allowed.json', allowed);
+    toRenderer('allowed-changed');
+    rokuLog(name, `connected from ${ip}`);
+    return sendJson(res, 200, { ok: true, token: t, hostName: settings.name, sharing: share.active, title: share.title });
+  }
+
+  const dev = rokuDevice(token);
+  if (!dev) return sendJson(res, 403, { ok: false, reason: 'unauthorized' });
+
+  if (url.pathname === '/roku/state') {
+    return sendJson(res, 200, { ok: true, hostName: settings.name, sharing: share.active, title: share.title, error: hls.error, info: hls.info, quality: settings.rokuQuality || '1080p60' });
+  }
+
+  if (url.pathname === '/roku/log' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => { if (body.length < 65536) body += d; });
+    req.on('end', () => { rokuLog(dev.name, body); sendJson(res, 200, { ok: true }); });
+    return;
+  }
+
+  if (url.pathname === '/hls/live.m3u8') {
+    if (!share.active) return sendJson(res, 404, { ok: false, reason: 'not-sharing' });
+    hlsTouch(dev.id);
+    // Wait (up to 8 s) for the first chunks after the encoder starts.
+    for (let i = 0; i < 80 && hls.segments.length < 2 && share.active && !hls.error; i++) await new Promise((r) => setTimeout(r, 100));
+    if (!hls.segments.length) return sendJson(res, 503, { ok: false, reason: hls.error || 'starting' });
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
+    return res.end(playlist(token));
+  }
+
+  const m = url.pathname.match(/^\/hls\/seg-(\d+)\.ts$/);
+  if (m) {
+    hlsTouch(dev.id);
+    const seg = hls.segments.find((x) => x.seq === Number(m[1]));
+    if (!seg) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': seg.bytes.length, 'Cache-Control': 'no-store' });
+    return res.end(seg.bytes);
+  }
+
+  res.writeHead(404);
+  res.end();
+}
+
 // ---------- window + tray ----------
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 const TRAY_ICON = path.join(__dirname, 'assets', 'tray.png');
@@ -526,6 +680,7 @@ function updateTray() {
     { label: status, enabled: false },
     { type: 'separator' },
     { label: 'Open EsteefCast', click: showWindow },
+    { label: 'Open Roku log', click: () => { try { fs.appendFileSync(dataFile('roku-log.txt'), ''); } catch {} require('electron').shell.openPath(dataFile('roku-log.txt')); } },
     { label: 'Stop sharing', enabled: share.active, click: () => toRenderer('tray-stop') },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
@@ -543,12 +698,14 @@ function createTray() {
 function openTestWindows() {
   if (env.ESTEEFCAST_TEST_PATTERN === '1') {
     const pat = new BrowserWindow({
-      width: 1280, height: 720, x: 40, y: 40, title: 'EsteefCast Test Pattern',
+      width: Number((env.ESTEEFCAST_PATTERN_SIZE || '').split('x')[0]) || 1280,
+      height: Number((env.ESTEEFCAST_PATTERN_SIZE || '').split('x')[1]) || 720,
+      x: 40, y: 40, title: 'EsteefCast Test Pattern',
       backgroundColor: '#000000', autoHideMenuBar: true,
       webPreferences: { backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' },
     });
     // The packaged app has no test folder; the test passes the file's path in.
-    pat.loadFile(env.ESTEEFCAST_PATTERN_FILE || path.join(__dirname, 'test', 'pattern.html'), { query: env.ESTEEFCAST_PATTERN_STATIC === '1' ? { static: '1' } : {} });
+    pat.loadFile(env.ESTEEFCAST_PATTERN_FILE || path.join(__dirname, 'test', 'pattern.html'), { query: { ...(env.ESTEEFCAST_PATTERN_STATIC === '1' ? { static: '1' } : {}), ...(env.ESTEEFCAST_PATTERN_TONE === '0' ? { tone: '0' } : {}) } });
   }
   if (env.ESTEEFCAST_TEST_VIEWER === '1') {
     const viewer = new BrowserWindow({
@@ -570,7 +727,7 @@ if (!gotLock) {
     app.setAppUserModelId('ai.esteef.esteefcast');
     settings = readJson('settings.json', {
       hostId: crypto.randomUUID(), name: os.hostname(), quality: '1080p60', audio: true, sourceId: null,
-      remoteEnabled: false, remoteKbps: 8000, serviceUrl: '', maxViewers: 4,
+      remoteEnabled: false, remoteKbps: 8000, serviceUrl: '', maxViewers: 4, rokuQuality: '1080p60',
     });
     if (!settings.hostSecret) settings.hostSecret = crypto.randomBytes(32).toString('base64url');
     if (TEST && env.ESTEEFCAST_REMOTE === '1') settings.remoteEnabled = true;

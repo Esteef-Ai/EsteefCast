@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Finds PCs running EsteefCast: broadcasts on UDP 47800 every 2 s, like the Android TV app. -->
+<component name="DiscoveryTask" extends="Task">
+  <interface>
+    <field id="hosts" type="array" />
+    <field id="stop" type="boolean" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="DiscoveryTask.brs" />
+</component>

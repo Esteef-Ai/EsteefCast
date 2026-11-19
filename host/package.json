@@ -1,7 +1,7 @@
 {
   "name": "esteefcast",
   "productName": "EsteefCast",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "Share your PC screen and sound to your TV. By Esteef.Ai",
   "main": "main.js",
@@ -11,6 +11,7 @@
     "icons": "node scripts/make-icons.js",
     "test": "node test/e2e.mjs",
     "test:remote": "node test/e2e-remote.mjs",
+    "test:roku": "node test/e2e-roku.mjs",
     "dist": "electron-builder --win portable"
   },
   "build": {

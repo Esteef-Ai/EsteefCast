@@ -41,7 +41,8 @@ function draw() {
   if (!STATIC) requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
-try {
+// ?tone=0 keeps it silent (TV benchmarks); the audio test needs the tone.
+if (new URLSearchParams(location.search).get('tone') !== '0') try {
   const ac = new AudioContext();
   const o = ac.createOscillator(); const gain = ac.createGain();
   o.frequency.value = 440; gain.gain.value = 0.05;

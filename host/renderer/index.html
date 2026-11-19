@@ -44,6 +44,14 @@
           </select>
         </label>
         <label class="field">
+          <span>Roku picture</span>
+          <select id="rokuQuality">
+            <option value="1080p60">1080p · 60 fps</option>
+            <option value="1080p30">1080p · 30 fps (older Rokus)</option>
+            <option value="720p60">720p · 60 fps (weak Wi-Fi)</option>
+          </select>
+        </label>
+        <label class="field">
           <span>TVs that can watch at once</span>
           <select id="maxViewers">
             <option value="1">1</option>
@@ -65,6 +73,7 @@
       <section class="panel">
         <h2>TVs watching <span id="viewerCount" class="count">0</span></h2>
         <ul id="viewers" class="list"><li class="empty">No TVs connected yet.</li></ul>
+        <p id="rokuStatus" class="note"></p>
       </section>
 
       <section class="panel">
@@ -112,6 +121,7 @@
   </main>
 
   <script src="rtc.js"></script>
+  <script src="hls.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

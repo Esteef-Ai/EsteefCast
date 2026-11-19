@@ -48,7 +48,11 @@ The video goes straight from your PC to their TV. The EsteefCast service only in
 
 > **Coming from 0.1.0 or 0.2.0?** From 0.3.0 on, the TV app is signed with EsteefCast's permanent key, so Android won't install it over the older versions. Uninstall EsteefCast from the TV once, then install 0.3.0. Later versions will update in place.
 
-> Roku TVs (including TCL Roku TV models) and Fire TV devices running Vega OS can't install APKs. A Roku app is planned.
+> Fire TV devices running Vega OS can't install APKs.
+
+### Roku (preview)
+
+Roku can't install APKs. It gets its own channel, `EsteefCast-Roku-<version>.zip`, installed in Roku developer mode. Rokus play an HLS stream, so they run **1–3 seconds behind** the PC: fine for video and TV, not for gaming. The PC only produces the Roku stream while a Roku is watching. Step-by-step guide: [roku/TESTER.md](roku/TESTER.md).
 
 ## Quality
 
@@ -80,6 +84,7 @@ npm install
 npm start          # run it
 npm test           # end-to-end test: discovery, 60 fps H.264, stereo audio
 npm run test:remote  # friends outside the home, through a local copy of the service
+npm run test:roku    # the Roku (HLS) stream, checked with ffmpeg
 npm run dist       # build the portable exe into host/dist
 ```
 
@@ -88,6 +93,8 @@ npm run dist       # build the portable exe into host/dist
 cd tv
 gradlew assembleRelease
 ```
+
+**Roku channel** (Node 18+): `cd roku`, `npm install`, `npx bsc` builds and checks `build/EsteefCast-Roku.zip`.
 
 **Service** (Node 18+): see `rendezvous/`. Make a certificate with `make-cert.sh`, then put `cert.pem` into both apps (see the script) and run `start-service.bat`.
 

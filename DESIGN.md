@@ -66,4 +66,8 @@ Each friend's stream is limited by the PC's **Upload limit per friend** (default
 1. Home network: host and viewer, discovery, 1080p60 with a 4K option, audio, multiple TVs, Allow prompt, address fallback. **Built (v0.1.0).**
 2. Remote viewing: service, invite codes, friends' TVs, upload limit. **Built (v0.2.0).** Next: UPnP, TURN.
 3. Packaging: permanent APK signing key, ARM-only APK (18.5 MB), cap on TVs watching at once (default 4), sideload guide. **Built (v0.3.0).** Still open: a code-signed exe, which needs a paid code-signing certificate.
-4. Roku watch-only app (BrightScript, low-latency HLS from the host, 1–3 s delay).
+4. Roku watch-only app. **Built (v0.4.0 preview), not yet run on a real Roku.**
+   - PC: `host/renderer/hls.js` makes a second encode (WebCodecs H.264 High, hardware, plus AAC-LC) and packs it into 1 s MPEG-TS chunks with its own TS muxer. `main.js` serves `/hls/live.m3u8` + `/hls/seg-N.ts`. It only runs while a Roku fetches (stops after 20 s), and all Rokus share one encode.
+   - Approval: `/roku/hello` → Allow/Deny on the PC → a per-Roku key (stored hashed). `/roku/state`, and `/roku/log` (POST), which saves to `roku-log.txt` (tray → Open Roku log).
+   - Roku: `roku/` (SceneGraph). The PC list comes from UDP discovery (`roDatagramSocket`) plus Enter address; network calls run in Task nodes; full-screen `Video` (HLS, live); OK shows stats; it posts its logs to the PC.
+   - Checked with `npm run test:roku` (ffmpeg as the player: valid stream, H.264 High 60 fps, AAC stereo, 1 s chunks, keys) and BrighterScript (0 errors).

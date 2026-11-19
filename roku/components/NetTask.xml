@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One HTTP request on a background thread (Roku forbids network calls on the screen thread). -->
+<component name="NetTask" extends="Task">
+  <interface>
+    <field id="request" type="assocarray" />
+    <field id="response" type="assocarray" />
+  </interface>
+  <script type="text/brightscript" uri="NetTask.brs" />
+</component>

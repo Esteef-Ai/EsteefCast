@@ -17,7 +17,7 @@ const app = await electron.launch({
   env: {
     ...process.env, ESTEEFCAST_TEST: '1', ESTEEFCAST_PORT: '47851', ESTEEFCAST_DISCOVERY_PORT: '47850',
     ESTEEFCAST_USERDATA: userData, ESTEEFCAST_TEST_PATTERN: '1', ESTEEFCAST_PATTERN_FILE: path.join(here, 'pattern.html'),
-    ESTEEFCAST_AUTOSHARE: 'EsteefCast Test Pattern', ESTEEFCAST_QUALITY: quality,
+    ESTEEFCAST_AUTOSHARE: 'EsteefCast Test Pattern', ESTEEFCAST_PATTERN_TONE: '0', ESTEEFCAST_QUALITY: quality,
   },
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

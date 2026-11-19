@@ -34,7 +34,7 @@ function preferH264(transceiver) {
 
 // Edit the viewer's answer before applying it: start the video at a high bitrate
 // instead of ramping up from ~300 kbps, and send Opus in stereo at full quality.
-function tuneAnswer(sdp, startKbps) {
+function tuneAnswer(sdp, startKbps, minKbps = 0) {
   const lines = sdp.split('\r\n');
   const codecOf = {};
   for (const l of lines) {
@@ -48,6 +48,7 @@ function tuneAnswer(sdp, startKbps) {
     if (['H264', 'VP8', 'VP9', 'AV1'].includes(codec)) {
       const parts = m[2].split(';').filter((p) => !/^x-google-(start|max|min)-bitrate=/.test(p));
       parts.push(`x-google-start-bitrate=${startKbps}`, `x-google-max-bitrate=${MAX_KBPS}`);
+      if (minKbps > 0) parts.push(`x-google-min-bitrate=${minKbps}`);
       return `a=fmtp:${m[1]} ${parts.join(';')}`;
     }
     if (codec === 'OPUS') {

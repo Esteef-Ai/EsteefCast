@@ -1,7 +1,7 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = ['viewer-join', 'viewer-leave', 'signal-in', 'allowed-changed', 'tray-stop', 'remote-status', 'invite-used'];
+const EVENTS = ['viewer-join', 'viewer-leave', 'signal-in', 'allowed-changed', 'tray-stop', 'remote-status', 'invite-used', 'hls-start', 'hls-stop', 'roku-status'];
 
 contextBridge.exposeInMainWorld('ecast', {
   sources: () => ipcRenderer.invoke('sources'),
@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('ecast', {
   remoteGet: () => ipcRenderer.invoke('remote-get'),
   remoteSet: (patch) => ipcRenderer.invoke('remote-set', patch),
   inviteCreate: () => ipcRenderer.invoke('invite-create'),
+  hlsSegment: (seg) => ipcRenderer.send('hls-segment', seg),
+  hlsError: (msg) => ipcRenderer.send('hls-error', msg),
   on: (channel, fn) => {
     if (EVENTS.includes(channel)) ipcRenderer.on(channel, (_e, data) => fn(data));
   },

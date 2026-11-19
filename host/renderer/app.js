@@ -2,6 +2,7 @@
 /* global ecast, QUALITY, preferH264, tuneAnswer */
 
 const $ = (id) => document.getElementById(id);
+let TUNE = {}; // experiment overrides (test mode only), set in init()
 const state = {
   settings: null,
   sources: [],
@@ -128,6 +129,7 @@ function stopShare() {
   if (!state.sharing) return;
   state.sharing = false;
   for (const v of state.viewers.values()) closePeer(v, true);
+  window.ecastHls.stop();
   if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
   state.stream = null;
   ecast.shareState({ active: false, title: '' });
@@ -151,6 +153,9 @@ async function switchSource() {
       if (kind === 'video') t.sender.replaceTrack(vt).catch(() => {});
       if (kind === 'audio') t.sender.replaceTrack(at).catch(() => {});
     }
+  }
+  if (window.ecastHls.running) {
+    window.ecastHls.start(next, state.settings.rokuQuality || '1080p60').catch((e) => ecast.hlsError(e.message));
   }
   if (old) old.getTracks().forEach((t) => t.stop());
   state.title = sourceTitle(state.selectedId);
@@ -187,7 +192,10 @@ async function setVideoParams(pc, q, v) {
       p.encodings[0].maxFramerate = q.fps;
       p.encodings[0].networkPriority = 'high';
       p.encodings[0].priority = 'high';
-      p.degradationPreference = 'maintain-framerate';
+      // 'maintain-resolution' at home halved Fire TV dropped frames (162 -> 90 per 30 s)
+      // but stalled at 0 fps in 2 of ~10 runs, so it stays a test switch
+      // (ESTEEFCAST_TUNE {"degrade":"maintain-resolution"}) until that is understood.
+      p.degradationPreference = TUNE.degrade || 'maintain-framerate';
     } else if (kind === 'audio') {
       p.encodings[0].maxBitrate = 510000;
       p.encodings[0].networkPriority = 'high';
@@ -253,8 +261,9 @@ async function onSignal({ id, msg }) {
   try {
     if (msg.type === 'answer' && typeof msg.sdp === 'string') {
       const q = QUALITY[$('quality').value] || QUALITY['1080p60'];
-      const start = v.remote ? Math.min(2500, viewerKbps(v, q)) : Math.round(q.kbps * 0.6);
-      await v.pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(msg.sdp, start) });
+      const start = v.remote ? Math.min(2500, viewerKbps(v, q)) : Math.round(q.kbps * (TUNE.start != null ? TUNE.start : 0.6));
+      const min = v.remote ? 0 : Math.round(q.kbps * (TUNE.min || 0));
+      await v.pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(msg.sdp, start, min) });
       v.lastAnswer = msg.sdp;
     } else if (msg.type === 'candidate' && msg.candidate) {
       await v.pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.sdpMid, sdpMLineIndex: msg.sdpMLineIndex });
@@ -449,6 +458,7 @@ async function renderAllowed() {
     t.className = 'title';
     t.textContent = list[id].name;
     if (list[id].remote) t.append(tag('away'));
+    if (list[id].kind === 'roku') t.append(tag('roku'));
     const b = document.createElement('button');
     b.textContent = 'Forget';
     b.title = 'This TV will have to ask again next time';
@@ -462,6 +472,7 @@ async function renderAllowed() {
 async function init() {
   state.settings = await ecast.getSettings();
   const s = state.settings;
+  try { TUNE = s.tune ? JSON.parse(s.tune) : {}; } catch { TUNE = {}; }
   $('quality').value = QUALITY[s.quality] ? s.quality : '1080p60';
   $('audio').checked = s.audio !== false;
   $('maxViewers').value = String(s.maxViewers || 4);
@@ -503,6 +514,26 @@ async function init() {
     renderViewers();
   });
   ecast.on('signal-in', onSignal);
+  // Roku: a second encode as HLS, only while a Roku is fetching it.
+  ecast.on('hls-start', async ({ preset }) => {
+    if (!state.stream) return;
+    try { await window.ecastHls.start(state.stream, preset); } catch (e) { ecast.hlsError(e.message); }
+  });
+  ecast.on('hls-stop', () => window.ecastHls.stop());
+  ecast.on('roku-status', (r) => {
+    const el = $('rokuStatus');
+    if (r.error) { el.textContent = `Roku stream problem: ${r.error}`; el.className = 'note warn'; return; }
+    el.className = 'note';
+    el.textContent = r.watching
+      ? `${r.watching} Roku${r.watching > 1 ? 's' : ''} watching${r.info ? ` · ${r.info.width}×${r.info.height} ${r.info.fps} fps` : ''} · 1-3 s behind`
+      : '';
+  });
+  $('rokuQuality').value = s.rokuQuality || '1080p60';
+  $('rokuQuality').addEventListener('change', () => {
+    state.settings.rokuQuality = $('rokuQuality').value;
+    ecast.setSettings({ rokuQuality: $('rokuQuality').value });
+    if (window.ecastHls.running && state.stream) window.ecastHls.start(state.stream, $('rokuQuality').value).catch((e) => ecast.hlsError(e.message));
+  });
   ecast.on('remote-status', renderRemote);
   ecast.on('invite-used', ({ code, name }) => {
     if ($('inviteCode').textContent === code) {

@@ -380,10 +380,19 @@ class PlayerActivity : Activity() {
             val buffer = if (emitted > 0) ((m["jitterBufferDelay"] as? Number)?.toDouble() ?: 0.0) / emitted * 1000 else 0.0
             val codecId = m["codecId"] as? String
             val codec = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String } ?: ""
+            // Where frames go missing: lost packets (network) vs slow decode (TV chip).
+            val num = { k: String -> (m[k] as? Number)?.toDouble() ?: 0.0 }
+            val decoded = num("framesDecoded")
+            val decodeMs = if (decoded > 0) num("totalDecodeTime") / decoded * 1000 else 0.0
+            val net = String.format(
+                "lost %.0f  nack %.0f  pli %.0f  freezes %.0f  recv %.0f  dec %.0f  decode %.1f ms",
+                num("packetsLost"), num("nackCount"), num("pliCount"), num("freezeCount"), num("framesReceived"), decoded, decodeMs,
+            )
             line = String.format(
-                "%s×%s  %s fps  %.1f Mbps\n%s  %s\nbuffer %.0f ms  dropped %s\n%s\n%s",
+                "%s×%s  %s fps  %.1f Mbps\n%s  %s\nbuffer %.0f ms  dropped %s\n%s\n%s\n%s",
                 m["frameWidth"] ?: "?", m["frameHeight"] ?: "?", (m["framesPerSecond"] as? Number)?.toInt() ?: 0, mbps,
-                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, if (remoteId != null) "$hostName (away)" else "$hostName ($ip)", route(report),
+                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, net,
+                if (remoteId != null) "$hostName (away)" else "$hostName ($ip)", route(report),
             )
         }
         if (line.isNotEmpty()) {

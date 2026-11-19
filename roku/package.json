@@ -1,0 +1,12 @@
+{
+  "name": "esteefcast-roku",
+  "version": "0.4.0",
+  "private": true,
+  "description": "EsteefCast Roku channel (sideload). By Esteef.Ai",
+  "scripts": {
+    "build": "bsc"
+  },
+  "devDependencies": {
+    "brighterscript": "0.73.8"
+  }
+}
