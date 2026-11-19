@@ -214,6 +214,11 @@ class PlayerActivity : Activity() {
                 show("Waiting for someone at $hostName to allow this TV…\n(A prompt is showing on the PC.)")
             }
             "denied" -> { show("$hostName didn't allow this TV."); closed = true }
+            "full" -> {
+                hostName = msg.optString("hostName", hostName)
+                show("$hostName already has ${msg.optInt("max")} TVs watching.\nTry again when one of them stops.")
+                closed = true
+            }
             "welcome", "state" -> {
                 hostName = msg.optString("hostName", hostName)
                 if (!msg.optBoolean("sharing")) { closePeer(); show("$hostName isn't sharing right now.\nIt will appear here as soon as it starts.") }

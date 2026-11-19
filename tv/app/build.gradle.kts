@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// The permanent release key lives outside the repo: <project>/secrets/keystore.properties
+// (storeFile, storePassword, keyAlias, keyPassword). Without it, release builds fall back
+// to the debug key so anyone can still build, but those APKs can't update the official ones.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("../secrets/keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val hasReleaseKey = keystoreProps.getProperty("storeFile")?.let { file(it).exists() } == true
 
 android {
     namespace = "ai.esteef.esteefcast"
@@ -11,14 +22,23 @@ android {
         applicationId = "ai.esteef.esteefcast"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
+    }
+    signingConfigs {
+        if (hasReleaseKey) create("release") {
+            storeFile = file(keystoreProps.getProperty("storeFile"))
+            storePassword = keystoreProps.getProperty("storePassword")
+            keyAlias = keystoreProps.getProperty("keyAlias")
+            keyPassword = keystoreProps.getProperty("keyPassword")
+        }
     }
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with this computer's debug key so it sideloads without a keystore (phase 3 adds a real one).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+            // TVs and Fire TV sticks are ARM; the x86 libraries only matter for emulators (debug builds).
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         }
     }
     compileOptions {

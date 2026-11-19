@@ -65,5 +65,5 @@ Each friend's stream is limited by the PC's **Upload limit per friend** (default
 ## Phases
 1. Home network: host and viewer, discovery, 1080p60 with a 4K option, audio, multiple TVs, Allow prompt, address fallback. **Built (v0.1.0).**
 2. Remote viewing: service, invite codes, friends' TVs, upload limit. **Built (v0.2.0).** Next: UPnP, TURN.
-3. Packaging: a real APK signing key, code-signed exe, sideload guide, a cap on how many viewers can watch at once.
+3. Packaging: permanent APK signing key, ARM-only APK (18.5 MB), cap on TVs watching at once (default 4), sideload guide. **Built (v0.3.0).** Still open: a code-signed exe, which needs a paid code-signing certificate.
 4. Roku watch-only app (BrightScript, low-latency HLS from the host, 1–3 s delay).

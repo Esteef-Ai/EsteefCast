@@ -126,6 +126,9 @@ function onMessage(msg) {
     case 'denied':
       show(`${hostName} said no.`);
       break;
+    case 'full':
+      show(`${msg.hostName || hostName} already has ${msg.max} screens watching. Try again later.`);
+      break;
     case 'welcome':
     case 'state':
       if (msg.hostName) hostName = msg.hostName;

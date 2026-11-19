@@ -1,7 +1,7 @@
 {
   "name": "esteefcast",
   "productName": "EsteefCast",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Share your PC screen and sound to your TV. By Esteef.Ai",
   "main": "main.js",

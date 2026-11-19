@@ -46,6 +46,8 @@ The video goes straight from your PC to their TV. The EsteefCast service only in
 2. Settings → Apps → Security & restrictions → **Unknown sources**: allow *Downloader* (or your file manager).
 3. Install **Downloader** from Google Play and enter the APK link. Another way: copy the APK onto a USB stick and open it with a file manager.
 
+> **Coming from 0.1.0 or 0.2.0?** From 0.3.0 on, the TV app is signed with EsteefCast's permanent key, so Android won't install it over the older versions. Uninstall EsteefCast from the TV once, then install 0.3.0. Later versions will update in place.
+
 > Roku TVs (including TCL Roku TV models) and Fire TV devices running Vega OS can't install APKs. A Roku app is planned.
 
 ## Quality

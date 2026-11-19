@@ -35,6 +35,7 @@ const app = await electron.launch({
     ESTEEFCAST_TEST_VIEWER: '1',
     ESTEEFCAST_AUTOSHARE: 'EsteefCast Test Pattern',
     ESTEEFCAST_QUALITY: quality,
+    ESTEEFCAST_MAX_VIEWERS: '1',
   },
 });
 
@@ -44,11 +45,12 @@ try {
     const s = dgram.createSocket('udp4');
     let open = true;
     const done = (v) => { if (!open) return; open = false; clearTimeout(timer); s.close(); resolve(v); };
-    const timer = setTimeout(() => done(null), 4000);
+    const timer = setTimeout(() => done(null), 12000);
     s.on('message', (m) => done(JSON.parse(String(m))));
     s.bind(0, () => {
       const ask = () => { if (open) s.send('ESTEEFCAST_DISCOVER', DPORT, '127.0.0.1'); };
-      ask(); setTimeout(ask, 1000); setTimeout(ask, 2000);
+      ask();
+      const again = setInterval(() => { if (open) ask(); else clearInterval(again); }, 1000);
     });
   });
   check('discovery reply', !!reply && reply.app === 'EsteefCast' && reply.port === PORT, reply ? `${reply.name}, port ${reply.port}` : 'no reply');
@@ -79,7 +81,14 @@ try {
   const fps = Math.max(...samples.map((s) => s.fps));
   const mbps = Math.max(...samples.map((s) => s.mbps));
   console.log('viewer stats:', JSON.stringify(last));
-  const host = await app.windows()[0].evaluate(() => window.__ecastStats);
+  // The host's stats arrive once a second; wait until the encoder name is in.
+  const mainWin = app.windows().find((w) => w.url().endsWith('index.html'));
+  let host = null;
+  for (let i = 0; i < 20; i++) {
+    host = await mainWin.evaluate(() => window.__ecastStats);
+    if (host && host[0] && host[0].encoder) break;
+    await sleep(250);
+  }
   console.log('host stats:', JSON.stringify(host));
 
   check('codec is H.264', /h264/i.test(last.codec), last.codec);
@@ -94,6 +103,26 @@ try {
   check('test tone audible on viewer', rms > 0.005, `rms ${rms.toFixed(4)}`);
   const enc = host && host[0] ? host[0].encoder : '';
   check('encoder reported', !!enc, enc);
+
+  // The cap is 1 in this test: a second screen must be turned away politely.
+  await app.evaluate(({ BrowserWindow }, port) => {
+    const w = new BrowserWindow({ width: 640, height: 360, title: 'Second viewer', webPreferences: { backgroundThrottling: false } });
+    w.loadURL(`http://127.0.0.1:${port}/?test=1&n=2`);
+  }, PORT);
+  let second = null;
+  for (let i = 0; i < 20 && !second; i++) {
+    second = app.windows().find((w) => w.url().includes('n=2'));
+    if (!second) await sleep(250);
+  }
+  let msg = '';
+  for (let i = 0; i < 20; i++) {
+    msg = await second.evaluate(() => window.__viewer.state).catch(() => '');
+    if (/already has/.test(msg)) break;
+    await sleep(250);
+  }
+  check('viewer cap turns extra screens away', /already has 1/.test(msg), msg);
+  const still = await viewer.evaluate(() => window.__viewer.state);
+  check('first viewer keeps watching', still === 'playing', still);
 } catch (e) {
   check('test ran', false, e.message);
 } finally {

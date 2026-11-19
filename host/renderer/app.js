@@ -445,6 +445,8 @@ async function init() {
   const s = state.settings;
   $('quality').value = QUALITY[s.quality] ? s.quality : '1080p60';
   $('audio').checked = s.audio !== false;
+  $('maxViewers').value = String(s.maxViewers || 4);
+  $('maxViewers').addEventListener('change', () => ecast.setSettings({ maxViewers: Number($('maxViewers').value) }));
   $('pcName').value = s.name;
   const addr = $('addresses');
   addr.textContent = '';

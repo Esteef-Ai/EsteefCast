@@ -212,7 +212,17 @@ function askApproval(v) {
   }).catch((e) => console.error('[approve]', e));
 }
 
+function maxViewers() {
+  return Math.max(1, Number(env.ESTEEFCAST_MAX_VIEWERS) || Number(settings.maxViewers) || 4);
+}
+
 function approve(v) {
+  // Each TV costs one hardware encode and some upload, so cap how many watch at once.
+  if (approvedViewers().length >= maxViewers()) {
+    send(v, { type: 'full', hostName: settings.name, max: maxViewers() });
+    setTimeout(() => v.close(), 300);
+    return;
+  }
   v.approved = true;
   send(v, { type: 'welcome', hostName: settings.name, sharing: share.active, title: share.title });
   toRenderer('viewer-join', {
@@ -260,7 +270,7 @@ function registerIpc() {
     test: TEST ? { autoshare: env.ESTEEFCAST_AUTOSHARE || '', quality: env.ESTEEFCAST_QUALITY || '' } : null,
   }));
   ipcMain.handle('settings-set', (_e, patch) => {
-    const keys = ['name', 'quality', 'audio', 'sourceId'];
+    const keys = ['name', 'quality', 'audio', 'sourceId', 'maxViewers'];
     for (const k of keys) if (patch && k in patch) settings[k] = patch[k];
     settings.name = String(settings.name || os.hostname()).slice(0, 40);
     writeJson('settings.json', settings);
@@ -560,7 +570,7 @@ if (!gotLock) {
     app.setAppUserModelId('ai.esteef.esteefcast');
     settings = readJson('settings.json', {
       hostId: crypto.randomUUID(), name: os.hostname(), quality: '1080p60', audio: true, sourceId: null,
-      remoteEnabled: false, remoteKbps: 8000, serviceUrl: '',
+      remoteEnabled: false, remoteKbps: 8000, serviceUrl: '', maxViewers: 4,
     });
     if (!settings.hostSecret) settings.hostSecret = crypto.randomBytes(32).toString('base64url');
     if (TEST && env.ESTEEFCAST_REMOTE === '1') settings.remoteEnabled = true;
