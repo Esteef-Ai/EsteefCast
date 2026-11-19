@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Address of the EsteefCast service (friends outside the home). -->
-    <string name="service_url" translatable="false">wss://YOUR-PUBLIC-ADDRESS:47900</string>
+    <string name="service_url" translatable="false">wss://esteefai.tplinkdns.com:47900</string>
 </resources>
