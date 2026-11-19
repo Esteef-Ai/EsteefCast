@@ -10,3 +10,9 @@ tv/local.properties
 .vscode/
 *.log
 release/
+secrets/
+rendezvous/key.pem
+rendezvous/cert.pem
+rendezvous/config.json
+rendezvous/hosts.json
+rendezvous/invites.json

@@ -67,6 +67,33 @@
       </section>
 
       <section class="panel">
+        <h2>Friends outside your home</h2>
+        <label class="check">
+          <input type="checkbox" id="remoteOn">
+          <span>Let invited friends watch from their home</span>
+        </label>
+        <p id="remoteState" class="note"></p>
+        <button id="invite" class="secondary" disabled>Create invite code</button>
+        <div id="inviteBox" class="invite" hidden>
+          <code id="inviteCode"></code>
+          <p class="note">On their TV, your friend opens EsteefCast, chooses <b>Add a friend's PC</b> and types this code. It works once, within 24 hours.</p>
+        </div>
+        <label class="field top-gap">
+          <span>Upload limit per friend</span>
+          <select id="remoteKbps">
+            <option value="4000">4 Mbps (slow internet)</option>
+            <option value="8000">8 Mbps (recommended)</option>
+            <option value="15000">15 Mbps</option>
+            <option value="25000">25 Mbps (fast fibre)</option>
+          </select>
+        </label>
+        <details class="advanced">
+          <summary>Service address</summary>
+          <input id="serviceUrl" spellcheck="false" placeholder="wss://example.org:47900">
+        </details>
+      </section>
+
+      <section class="panel">
         <h2>Allowed TVs</h2>
         <ul id="allowed" class="list"><li class="empty">None yet.</li></ul>
       </section>

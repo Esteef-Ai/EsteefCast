@@ -13,6 +13,10 @@ let ws = null;
 let pc = null;
 let hostName = 'the PC';
 let lastStats = null;
+// Away mode (?rv=wss://service:47900&code=BEAR-1234): reach the PC through the
+// EsteefCast service, like a TV at a friend's house.
+const RV = params.get('rv');
+let remoteStun = [];
 window.__viewer = { state: 'connecting', stats: null };
 
 function deviceId() {
@@ -32,6 +36,7 @@ function hide() { overlay.classList.add('hidden'); }
 function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
 
 function connect() {
+  if (RV) return connectRemote();
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.onopen = () => {
     const ua = navigator.userAgent;
@@ -48,6 +53,67 @@ function connect() {
     closePeer();
     show('Lost the connection to the PC. Retrying…');
     setTimeout(connect, 2000);
+  };
+}
+
+const REASONS = {
+  offline: 'The PC is off, or EsteefCast is not running on it. Trying again…',
+  unauthorized: 'That PC no longer allows this screen. Ask for a new invite code.',
+  'bad-code': 'That code is not valid or has expired.',
+  'host-offline': 'The PC that made this code is off right now.',
+  'slow-down': 'Too many tries. Wait a minute and try again.',
+};
+
+function connectRemote() {
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('ecastRemote') || 'null'); } catch { return null; } })();
+  if (saved && saved.token) return openRemote(saved);
+  const code = params.get('code');
+  if (!code) return show('Add an invite code to the address (&code=…).');
+  const pair = new WebSocket(`${RV}/viewer`);
+  pair.onopen = () => pair.send(JSON.stringify({ type: 'redeem', code, deviceId: deviceId(), name: TEST ? 'Test viewer (away)' : 'Browser (away)' }));
+  pair.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'paired') {
+      const rec = { hostId: m.hostId, hostName: m.hostName, token: m.token };
+      try { localStorage.setItem('ecastRemote', JSON.stringify(rec)); } catch {}
+      window.__viewer.paired = rec.hostName;
+      pair.close();
+      openRemote(rec);
+    } else if (m.type === 'error') {
+      show(REASONS[m.reason] || `Pairing failed (${m.reason}).`);
+      pair.close();
+    }
+  };
+  show('Pairing…');
+}
+
+function openRemote(rec) {
+  hostName = rec.hostName || hostName;
+  let opened = false;
+  ws = new WebSocket(`${RV}/viewer`);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'open', hostId: rec.hostId, token: rec.token, deviceId: deviceId(), name: 'Browser (away)' }));
+    show(`Contacting ${hostName}…`);
+  };
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type === 'opened') {
+      opened = true;
+      remoteStun = Array.isArray(msg.stun) ? msg.stun : [];
+      send({ type: 'hello', deviceId: deviceId(), name: 'Browser (away)', kind: 'web' });
+      return;
+    }
+    if (msg.type === 'relay-error') {
+      show(REASONS[msg.reason] || `Can't connect (${msg.reason}).`);
+      if (msg.reason === 'unauthorized') { try { localStorage.removeItem('ecastRemote'); } catch {} }
+      return;
+    }
+    if (opened) onMessage(msg);
+  };
+  ws.onclose = () => {
+    closePeer();
+    setTimeout(() => openRemote(rec), 3000);
   };
 }
 
@@ -80,7 +146,7 @@ function onMessage(msg) {
 
 async function answer(sdp) {
   closePeer();
-  pc = new RTCPeerConnection({ iceServers: [] });
+  pc = new RTCPeerConnection({ iceServers: RV && remoteStun.length ? [{ urls: remoteStun }] : [] });
   pc.ontrack = (e) => {
     try { e.receiver.jitterBufferTarget = 0; } catch {}
     if (video.srcObject !== e.streams[0]) video.srcObject = e.streams[0];

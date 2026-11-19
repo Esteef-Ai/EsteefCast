@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -40,9 +41,10 @@ class MainActivity : Activity() {
     private val tick = object : Runnable {
         override fun run() {
             probeManual()
+            probeRemote()
             // Forget PCs that stopped answering discovery.
             val now = System.currentTimeMillis()
-            val stale = hosts.values.filter { !it.manual && now - it.lastSeen > 7000 }.map { it.key }
+            val stale = hosts.values.filter { !it.manual && !it.remote && now - it.lastSeen > 7000 }.map { it.key }
             if (stale.isNotEmpty()) { stale.forEach { hosts.remove(it) }; render() }
             main.postDelayed(this, 3000)
         }
@@ -84,15 +86,24 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { isFillViewport = true; addView(list) }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val addBtn = item("Enter address", "Use this if your PC doesn't show up. EsteefCast on the PC shows its address.").apply {
-            id = View.generateViewId()
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val addBtn = item("Enter address", "If your PC doesn't show up. The PC app shows its address.").apply {
             setOnClickListener { askAddress() }
         }
-        root.addView(addBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        val friendBtn = item("Add a friend's PC", "Type the invite code your friend made in EsteefCast.").apply {
+            setOnClickListener { askCode() }
+        }
+        actions.addView(addBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
+        actions.addView(friendBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(6) })
+        root.addView(actions, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
         setContentView(root)
 
         ManualHosts.load(this).forEach { (ip, port) ->
             hosts["$ip:$port"] = Host(ip, port, ip, sharing = false, title = "", manual = true, reachable = false)
+        }
+        RemoteHosts.load(this).forEach { r ->
+            val h = Host("", 0, r.name, sharing = false, title = "", reachable = false, remoteId = r.hostId, token = r.token)
+            hosts[h.key] = h
         }
         discovery = Discovery(this) { h -> onDiscovered(h) }
         render()
@@ -137,6 +148,23 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun probeRemote() {
+        val remote = hosts.values.filter { it.remote }
+        if (remote.isEmpty() || !Service.configured(this)) return
+        val ids = org.json.JSONArray().apply { remote.forEach { put(it.remoteId) } }
+        Service.ask(this, org.json.JSONObject().put("type", "status").put("hostIds", ids), { it.optString("type") == "status" }) { r ->
+            val map = r?.optJSONObject("hosts")
+            var changed = false
+            for (h in hosts.values.filter { it.remote }) {
+                val o = map?.optJSONObject(h.remoteId!!)
+                val next = if (o == null) h.copy(reachable = false)
+                    else h.copy(reachable = o.optBoolean("online"), name = o.optString("name", h.name).ifBlank { h.name }, sharing = o.optBoolean("sharing"), title = o.optString("title"))
+                if (next.copy(lastSeen = 0) != h.copy(lastSeen = 0)) { hosts[h.key] = next; changed = true }
+            }
+            if (changed) render()
+        }
+    }
+
     private fun item(title: String, sub: String): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         isFocusable = true
@@ -155,7 +183,7 @@ class MainActivity : Activity() {
         focusedKey = (currentFocus?.tag as? String) ?: focusedKey
         list.removeAllViews()
         val sorted = hosts.values.sortedWith(compareByDescending<Host> { it.sharing }.thenBy { it.name.lowercase() })
-        val found = sorted.count { !it.manual || it.reachable }
+        val found = sorted.count { (!it.manual && !it.remote) || it.reachable }
         status.text = when {
             found == 0 -> "Looking for PCs on your network… Open EsteefCast on your PC."
             found == 1 -> "1 PC found"
@@ -164,6 +192,9 @@ class MainActivity : Activity() {
         var toFocus: View? = null
         for (h in sorted) {
             val sub = when {
+                h.remote && !h.reachable -> "Friend's PC · off right now (hold OK to remove)"
+                h.remote && h.sharing -> "Friend's PC · sharing now${if (h.title.isNotBlank()) ": ${h.title}" else ""}"
+                h.remote -> "Friend's PC · online, not sharing yet"
                 h.manual && !h.reachable -> "${h.ip} · not answering right now (hold OK to remove)"
                 h.sharing -> "Sharing now${if (h.title.isNotBlank()) ": ${h.title}" else ""}"
                 else -> "Online · not sharing yet"
@@ -171,7 +202,7 @@ class MainActivity : Activity() {
             val v = item(h.name, sub).apply {
                 tag = h.key
                 setOnClickListener { open(h) }
-                if (h.manual) setOnLongClickListener { confirmRemove(h); true }
+                if (h.manual || h.remote) setOnLongClickListener { confirmRemove(h); true }
             }
             list.addView(v, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
             if (h.key == focusedKey) toFocus = v
@@ -180,17 +211,79 @@ class MainActivity : Activity() {
     }
 
     private fun open(h: Host) {
-        startActivity(Intent(this, PlayerActivity::class.java)
-            .putExtra("ip", h.ip).putExtra("port", h.port).putExtra("name", h.name))
+        val i = Intent(this, PlayerActivity::class.java).putExtra("name", h.name)
+        if (h.remote) i.putExtra("remoteId", h.remoteId).putExtra("token", h.token)
+        else i.putExtra("ip", h.ip).putExtra("port", h.port)
+        startActivity(i)
     }
 
     private fun confirmRemove(h: Host) {
         AlertDialog.Builder(this)
             .setTitle("Remove ${h.name}?")
-            .setMessage("${h.ip}:${h.port} will no longer be listed.")
-            .setPositiveButton("Remove") { _, _ -> ManualHosts.remove(this, h.ip, h.port); hosts.remove(h.key); render() }
+            .setMessage(if (h.remote) "You'll need a new invite code to watch it again." else "${h.ip}:${h.port} will no longer be listed.")
+            .setPositiveButton("Remove") { _, _ ->
+                if (h.remote) RemoteHosts.remove(this, h.remoteId!!) else ManualHosts.remove(this, h.ip, h.port)
+                hosts.remove(h.key); render()
+            }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun askCode() {
+        if (!Service.configured(this)) {
+            AlertDialog.Builder(this).setTitle("Not available")
+                .setMessage("This copy of EsteefCast isn't set up for watching from another home.")
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        val input = EditText(this).apply {
+            hint = "e.g. BEAR-4821"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setSingleLine()
+            setTextColor(getColor(R.color.text))
+            setHintTextColor(getColor(R.color.muted))
+        }
+        val box = LinearLayout(this).apply { setPadding(dp(24), dp(8), dp(24), 0); addView(input, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)) }
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Add a friend's PC")
+            .setMessage("Your friend makes a code in EsteefCast on their PC (Friends outside your home → Create invite code). Type it here.")
+            .setView(box)
+            .setPositiveButton("Add", null)
+            .setNegativeButton("Cancel", null)
+            .create()
+        var busy = false
+        val submit = submit@{
+            if (busy) return@submit
+            val code = input.text.toString().trim()
+            if (code.length < 6) { input.error = "Type the whole code, like BEAR-4821"; return@submit }
+            busy = true
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+            val msg = org.json.JSONObject().put("type", "redeem").put("code", code)
+                .put("deviceId", Identity.deviceId(this)).put("name", Identity.deviceName(this))
+            Service.ask(this, msg, { it.optString("type") == "paired" || it.optString("type") == "error" }) { r ->
+                busy = false
+                dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = true
+                if (r?.optString("type") == "paired") {
+                    val rh = RemoteHost(r.optString("hostId"), r.optString("hostName", "Friend's PC"), r.optString("token"))
+                    RemoteHosts.save(this, rh)
+                    val h = Host("", 0, rh.name, sharing = false, title = "", reachable = true, remoteId = rh.hostId, token = rh.token)
+                    hosts[h.key] = h
+                    focusedKey = h.key
+                    dlg.dismiss()
+                    Toast.makeText(this, "Added ${rh.name}", Toast.LENGTH_LONG).show()
+                    render(); probeRemote()
+                } else {
+                    input.error = Service.reason(r?.optString("reason"))
+                }
+            }
+        }
+        input.setOnEditorActionListener { _, action, ev ->
+            if (action == EditorInfo.IME_ACTION_DONE || ev?.keyCode == KeyEvent.KEYCODE_ENTER) { submit(); true } else false
+        }
+        dlg.setOnShowListener { dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { submit() } }
+        dlg.show()
+        input.requestFocus()
     }
 
     private fun askAddress() {

@@ -28,8 +28,12 @@ data class Host(
     val manual: Boolean = false,
     val reachable: Boolean = true,
     val lastSeen: Long = System.currentTimeMillis(),
+    /** Set for a friend's PC reached through the EsteefCast service. */
+    val remoteId: String? = null,
+    val token: String? = null,
 ) {
-    val key get() = "$ip:$port"
+    val key get() = if (remoteId != null) "remote:$remoteId" else "$ip:$port"
+    val remote get() = remoteId != null
 }
 
 object Identity {

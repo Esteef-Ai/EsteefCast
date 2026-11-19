@@ -1,0 +1,14 @@
+{
+  "name": "esteefcast-rendezvous",
+  "version": "0.2.0",
+  "private": true,
+  "description": "EsteefCast rendezvous service: pairs TVs with PCs across the internet. Never carries video.",
+  "main": "server.js",
+  "author": "Esteef.Ai",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "8.18.3"
+  }
+}

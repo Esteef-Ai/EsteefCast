@@ -167,18 +167,23 @@ async function applyQuality() {
   try {
     await vt.applyConstraints({ frameRate: { ideal: q.fps, max: q.fps }, width: { max: q.w }, height: { max: q.h } });
   } catch (e) { console.warn('applyConstraints', e); }
-  for (const v of state.viewers.values()) if (v.pc) setVideoParams(v.pc, q);
+  for (const v of state.viewers.values()) if (v.pc) setVideoParams(v.pc, q, v);
 }
 
 // ---------- peers ----------
-async function setVideoParams(pc, q) {
+// Friends outside the home are limited by this PC's upload speed.
+function viewerKbps(v, q) {
+  return v && v.remote ? Math.min(q.kbps, Number(v.remoteKbps) || 8000) : q.kbps;
+}
+
+async function setVideoParams(pc, q, v) {
   for (const t of pc.getTransceivers()) {
     const s = t.sender;
     const kind = t.receiver.track.kind;
     const p = s.getParameters();
     if (!p.encodings || !p.encodings.length) p.encodings = [{}];
     if (kind === 'video') {
-      p.encodings[0].maxBitrate = q.kbps * 1000;
+      p.encodings[0].maxBitrate = viewerKbps(v, q) * 1000;
       p.encodings[0].maxFramerate = q.fps;
       p.encodings[0].networkPriority = 'high';
       p.encodings[0].priority = 'high';
@@ -195,7 +200,7 @@ async function startPeer(v) {
   closePeer(v, false);
   if (!state.sharing || !state.stream) return;
   const q = QUALITY[$('quality').value] || QUALITY['1080p60'];
-  const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+  const pc = new RTCPeerConnection({ iceServers: v.iceServers || [], bundlePolicy: 'max-bundle' });
   v.pc = pc;
   v.stats = null;
   v.last = null;
@@ -224,7 +229,7 @@ async function startPeer(v) {
   try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await setVideoParams(pc, q);
+    await setVideoParams(pc, q, v);
     ecast.signalOut(v.id, { type: 'offer', sdp: pc.localDescription.sdp, quality: $('quality').value });
   } catch (e) {
     console.error('offer failed', e);
@@ -248,7 +253,8 @@ async function onSignal({ id, msg }) {
   try {
     if (msg.type === 'answer' && typeof msg.sdp === 'string') {
       const q = QUALITY[$('quality').value] || QUALITY['1080p60'];
-      await v.pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(msg.sdp, Math.round(q.kbps * 0.6)) });
+      const start = v.remote ? Math.min(2500, viewerKbps(v, q)) : Math.round(q.kbps * 0.6);
+      await v.pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(msg.sdp, start) });
     } else if (msg.type === 'candidate' && msg.candidate) {
       await v.pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.sdpMid, sdpMLineIndex: msg.sdpMLineIndex });
     } else if (msg.type === 'stats') {
@@ -332,6 +338,7 @@ function renderViewers() {
     const t = document.createElement('div');
     t.className = 'title';
     t.textContent = v.name;
+    if (v.remote) t.append(tag('away'));
     const b = document.createElement('button');
     b.textContent = 'Disconnect';
     b.addEventListener('click', () => ecast.kick(v.id));
@@ -345,10 +352,12 @@ function renderViewers() {
 }
 
 function describe(v) {
-  if (!state.sharing) return `${v.ip} · waiting for you to share`;
-  if (!v.pc) return `${v.ip} · connecting…`;
+  const where = v.remote ? 'from their home' : v.ip;
+  if (!state.sharing) return `${where} · waiting for you to share`;
+  if (!v.pc) return `${where} · connecting…`;
   const cs = v.pc.connectionState;
-  if (cs !== 'connected') return `${v.ip} · ${cs === 'failed' ? 'connection failed, retrying' : 'connecting…'}`;
+  if (cs === 'failed' && v.remote) return `${where} · couldn't connect directly to their network, retrying`;
+  if (cs !== 'connected') return `${where} · ${cs === 'failed' ? 'connection failed, retrying' : 'connecting…'}`;
   const s = v.stats;
   if (!s) return `${v.ip} · connected`;
   const parts = [`${s.w}×${s.h}`, `${s.fps} fps`, `${s.mbps.toFixed(1)} Mbps`];
@@ -356,6 +365,51 @@ function describe(v) {
   if (s.rtt != null) parts.push(`${s.rtt} ms`);
   if (s.limit && s.limit !== 'none') parts.push(`limited by ${s.limit}`);
   return parts.join(' · ');
+}
+
+function tag(text) {
+  const s = document.createElement('span');
+  s.className = 'tag';
+  s.textContent = text;
+  return s;
+}
+
+// ---------- friends outside the home ----------
+function renderRemote(r) {
+  state.remote = r;
+  $('remoteOn').checked = r.enabled;
+  $('remoteKbps').value = String(r.remoteKbps || 8000);
+  if (document.activeElement !== $('serviceUrl')) $('serviceUrl').value = r.url || '';
+  const el = $('remoteState');
+  const texts = {
+    off: 'Off. Only TVs in your home can watch.',
+    connecting: r.error || 'Connecting to the EsteefCast service…',
+    online: 'Ready. Friends you invite can watch from their home.',
+    error: r.error || 'Something went wrong.',
+  };
+  el.textContent = texts[r.state] || '';
+  el.className = 'note' + (r.state === 'online' ? ' ok' : r.state === 'error' || (r.state === 'connecting' && r.error) ? ' warn' : '');
+  $('invite').disabled = r.state !== 'online';
+  if (r.state !== 'online') $('inviteBox').hidden = true;
+}
+
+async function createInvite() {
+  const btn = $('invite');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  const r = await ecast.inviteCreate();
+  btn.textContent = 'Create invite code';
+  btn.disabled = !(state.remote && state.remote.state === 'online');
+  if (r && r.code) {
+    $('inviteCode').textContent = r.code;
+    $('inviteBox').hidden = false;
+    window.__ecastInvite = r.code;
+  } else {
+    $('remoteState').textContent = r && r.error === 'too-many'
+      ? 'You have 10 unused codes already. Wait for them to be used or expire.'
+      : "Couldn't create a code. Check the connection to the EsteefCast service.";
+    $('remoteState').className = 'note warn';
+  }
 }
 
 async function renderAllowed() {
@@ -375,6 +429,7 @@ async function renderAllowed() {
     const t = document.createElement('div');
     t.className = 'title';
     t.textContent = list[id].name;
+    if (list[id].remote) t.append(tag('away'));
     const b = document.createElement('button');
     b.textContent = 'Forget';
     b.title = 'This TV will have to ask again next time';
@@ -427,6 +482,28 @@ async function init() {
     renderViewers();
   });
   ecast.on('signal-in', onSignal);
+  ecast.on('remote-status', renderRemote);
+  ecast.on('invite-used', ({ code, name }) => {
+    if ($('inviteCode').textContent === code) {
+      $('inviteBox').hidden = true;
+      $('remoteState').textContent = `${name} joined with your code and can now watch from their home.`;
+      $('remoteState').className = 'note ok';
+    }
+  });
+  $('remoteOn').addEventListener('change', async () => renderRemote(await ecast.remoteSet({ enabled: $('remoteOn').checked })));
+  $('invite').addEventListener('click', createInvite);
+  $('remoteKbps').addEventListener('change', async () => {
+    const kbps = Number($('remoteKbps').value);
+    renderRemote(await ecast.remoteSet({ remoteKbps: kbps }));
+    const q = QUALITY[$('quality').value] || QUALITY['1080p60'];
+    for (const v of state.viewers.values()) {
+      if (!v.remote) continue;
+      v.remoteKbps = kbps;
+      if (v.pc) setVideoParams(v.pc, q, v);
+    }
+  });
+  $('serviceUrl').addEventListener('change', async () => renderRemote(await ecast.remoteSet({ serviceUrl: $('serviceUrl').value })));
+  renderRemote(await ecast.remoteGet());
   ecast.on('allowed-changed', renderAllowed);
   ecast.on('tray-stop', stopShare);
 

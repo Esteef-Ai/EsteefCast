@@ -10,7 +10,7 @@ const os = require('os');
 const http = require('http');
 const dgram = require('dgram');
 const crypto = require('crypto');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket: WsClient } = require('ws');
 
 // Local addresses must stay visible in ICE candidates: TVs can't resolve the
 // random ".local" names Chromium uses to hide them.
@@ -75,7 +75,19 @@ function toRenderer(channel, data) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, data);
 }
 function send(v, msg) {
-  if (v.ws.readyState === 1) v.ws.send(JSON.stringify(msg));
+  v.send(msg);
+}
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+function sameHash(a, b) {
+  const x = Buffer.from(String(a), 'hex'); const y = Buffer.from(String(b), 'hex');
+  return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function removeViewer(v) {
+  if (!viewers.has(v.id)) return;
+  viewers.delete(v.id);
+  if (v.sid) svcSessions.delete(v.sid);
+  if (v.approved) toRenderer('viewer-leave', { id: v.id });
+  updateTray();
 }
 function approvedViewers() {
   return [...viewers.values()].filter((v) => v.approved);
@@ -117,7 +129,12 @@ function startServer() {
   wss.on('connection', (ws, req) => {
     const id = crypto.randomUUID();
     const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-    const v = { id, ws, ip, deviceId: null, name: 'TV', kind: 'tv', approved: false };
+    const v = {
+      id, ip, deviceId: null, name: 'TV', kind: 'tv', approved: false, remote: false,
+      send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); },
+      close: () => ws.close(),
+      isOpen: () => ws.readyState === 1,
+    };
     viewers.set(id, v);
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
@@ -126,11 +143,7 @@ function startServer() {
       try { msg = JSON.parse(String(data)); } catch { return; }
       if (msg && typeof msg.type === 'string') onViewerMessage(v, msg);
     });
-    ws.on('close', () => {
-      viewers.delete(id);
-      if (v.approved) toRenderer('viewer-leave', { id });
-      updateTray();
-    });
+    ws.on('close', () => removeViewer(v));
     ws.on('error', () => {});
   });
   // Drop TVs that vanished without closing (sleep, Wi-Fi drop).
@@ -153,6 +166,8 @@ function startServer() {
 
 function onViewerMessage(v, msg) {
   if (msg.type === 'hello') {
+    // Viewers from outside the home were checked by token when the session opened.
+    if (v.remote) { if (!v.approved) approve(v); return; }
     if (v.deviceId) return;
     v.deviceId = String(msg.deviceId || '').slice(0, 64) || `anon-${v.id}`;
     v.name = String(msg.name || 'TV').replace(/[\r\n]/g, ' ').slice(0, 60);
@@ -171,7 +186,7 @@ function onViewerMessage(v, msg) {
 let approvalChain = Promise.resolve();
 function askApproval(v) {
   approvalChain = approvalChain.then(async () => {
-    if (v.ws.readyState !== 1) return;
+    if (!v.isOpen()) return;
     if (allowed[v.deviceId]) return approve(v);
     showWindow();
     const r = await dialog.showMessageBox(win, {
@@ -184,7 +199,7 @@ function askApproval(v) {
       cancelId: 1,
       noLink: true,
     });
-    if (v.ws.readyState !== 1) return;
+    if (!v.isOpen()) return;
     if (r.response === 0) {
       allowed[v.deviceId] = { name: v.name, added: new Date().toISOString() };
       writeJson('allowed.json', allowed);
@@ -192,7 +207,7 @@ function askApproval(v) {
       approve(v);
     } else {
       send(v, { type: 'denied' });
-      setTimeout(() => v.ws.close(), 300);
+      setTimeout(() => v.close(), 300);
     }
   }).catch((e) => console.error('[approve]', e));
 }
@@ -200,7 +215,11 @@ function askApproval(v) {
 function approve(v) {
   v.approved = true;
   send(v, { type: 'welcome', hostName: settings.name, sharing: share.active, title: share.title });
-  toRenderer('viewer-join', { id: v.id, name: v.name, ip: v.ip, kind: v.kind });
+  toRenderer('viewer-join', {
+    id: v.id, name: v.name, ip: v.ip, kind: v.kind, remote: !!v.remote,
+    iceServers: v.remote && svc.stun.length ? [{ urls: svc.stun }] : [],
+    remoteKbps: Number(settings.remoteKbps) || 8000,
+  });
   updateTray();
 }
 
@@ -245,11 +264,37 @@ function registerIpc() {
     for (const k of keys) if (patch && k in patch) settings[k] = patch[k];
     settings.name = String(settings.name || os.hostname()).slice(0, 40);
     writeJson('settings.json', settings);
+    svcSend({ type: 'state', sharing: share.active, title: share.title, name: settings.name });
     return settings;
   });
+  ipcMain.handle('remote-get', () => remoteStatus());
+  ipcMain.handle('remote-set', (_e, patch) => {
+    const p = patch || {};
+    let reconnect = false;
+    if ('remoteKbps' in p) settings.remoteKbps = Number(p.remoteKbps) || 8000;
+    if ('serviceUrl' in p && String(p.serviceUrl || '').trim() !== (settings.serviceUrl || '')) {
+      settings.serviceUrl = String(p.serviceUrl || '').trim();
+      reconnect = true;
+    }
+    if ('enabled' in p && !!p.enabled !== !!settings.remoteEnabled) {
+      settings.remoteEnabled = !!p.enabled;
+      reconnect = true;
+    }
+    writeJson('settings.json', settings);
+    if (reconnect) { serviceDisconnect(); serviceConnect(); }
+    return remoteStatus();
+  });
+  ipcMain.handle('invite-create', () => new Promise((resolve) => {
+    if (svc.state !== 'online') return resolve({ error: 'offline' });
+    const done = (m) => { clearTimeout(timer); resolve(m); };
+    const timer = setTimeout(() => { svc.inviteWaiters = svc.inviteWaiters.filter((w) => w !== done); resolve({ error: 'timeout' }); }, 8000);
+    svc.inviteWaiters.push(done);
+    svcSend({ type: 'invite' });
+  }));
   ipcMain.on('share-state', (_e, state) => {
     share = { active: !!state.active, title: String(state.title || '') };
     for (const v of approvedViewers()) send(v, { type: 'state', sharing: share.active, title: share.title });
+    svcSend({ type: 'state', sharing: share.active, title: share.title, name: settings.name });
     updateTray();
   });
   ipcMain.on('signal-out', (_e, id, msg) => {
@@ -258,13 +303,13 @@ function registerIpc() {
   });
   ipcMain.on('kick', (_e, id) => {
     const v = viewers.get(id);
-    if (v) v.ws.close();
+    if (v) v.close();
   });
   ipcMain.handle('allowed-list', () => allowed);
   ipcMain.handle('allowed-forget', (_e, deviceId) => {
     delete allowed[deviceId];
     writeJson('allowed.json', allowed);
-    for (const v of viewers.values()) if (v.deviceId === deviceId) v.ws.close();
+    for (const v of [...viewers.values()]) if (v.deviceId === deviceId) v.close();
     return allowed;
   });
 }
@@ -285,6 +330,144 @@ function registerDisplayMedia() {
       callback({});
     }
   });
+}
+
+// ---------- EsteefCast service (friends outside the home) ----------
+const SERVICE_DEFAULT = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'assets', 'service.json'), 'utf8')).url || ''; } catch { return ''; }
+})();
+const SERVICE_CERT_FILE = env.ESTEEFCAST_SERVICE_CERT || path.join(__dirname, 'assets', 'service-cert.pem');
+const svc = { ws: null, state: 'off', error: '', stun: [], retry: 0, timer: null, inviteWaiters: [], registered: false };
+const svcSessions = new Map(); // sid -> viewer
+
+function serviceUrl() {
+  return String(env.ESTEEFCAST_SERVICE || settings.serviceUrl || SERVICE_DEFAULT || '').trim();
+}
+function remoteStatus() {
+  return {
+    enabled: !!settings.remoteEnabled, state: svc.state, error: svc.error,
+    url: serviceUrl(), defaultUrl: SERVICE_DEFAULT, remoteKbps: Number(settings.remoteKbps) || 8000,
+  };
+}
+function setServiceState(state, error = '') {
+  svc.state = state;
+  svc.error = error;
+  toRenderer('remote-status', remoteStatus());
+}
+function svcSend(m) {
+  if (svc.ws && svc.ws.readyState === 1 && (svc.registered || m.type === 'register')) svc.ws.send(JSON.stringify(m));
+}
+
+function serviceConnect() {
+  clearTimeout(svc.timer);
+  if (!settings.remoteEnabled) return setServiceState('off');
+  const base = serviceUrl();
+  if (!/^wss:\/\/[^/]+/i.test(base) || /YOUR-/i.test(base)) return setServiceState('error', 'No EsteefCast service address is set.');
+  let ca;
+  try { ca = fs.readFileSync(SERVICE_CERT_FILE); } catch { return setServiceState('error', 'This copy of EsteefCast is missing its service certificate.'); }
+  setServiceState('connecting', svc.error);
+  svc.registered = false;
+  const ws = new WsClient(base.replace(/\/+$/, '') + '/host', {
+    ca, checkServerIdentity: () => undefined, handshakeTimeout: 8000,
+  });
+  svc.ws = ws;
+  ws.on('open', () => svcSend({
+    type: 'register', hostId: settings.hostId, secret: settings.hostSecret,
+    name: settings.name, sharing: share.active, title: share.title,
+  }));
+  ws.on('message', (data) => {
+    let m;
+    try { m = JSON.parse(String(data)); } catch { return; }
+    if (m && typeof m.type === 'string') onServiceMessage(m);
+  });
+  ws.on('error', (e) => { svc.error = `Can't reach the EsteefCast service (${e.code || e.message}). Retrying…`; });
+  ws.on('close', () => {
+    if (svc.ws !== ws) return;
+    svc.ws = null;
+    svc.registered = false;
+    for (const v of [...viewers.values()]) if (v.remote) v.drop();
+    if (!settings.remoteEnabled) return setServiceState('off');
+    if (svc.state === 'error') return;
+    setServiceState('connecting', svc.error || 'Lost the EsteefCast service. Reconnecting…');
+    svc.retry = Math.min(svc.retry + 1, 5);
+    svc.timer = setTimeout(serviceConnect, 1000 * 2 ** svc.retry);
+  });
+}
+
+function serviceDisconnect() {
+  clearTimeout(svc.timer);
+  const ws = svc.ws;
+  svc.ws = null;
+  svc.registered = false;
+  svc.error = '';
+  for (const v of [...viewers.values()]) if (v.remote) v.drop();
+  if (ws) ws.close();
+  setServiceState('off');
+}
+
+function onServiceMessage(m) {
+  switch (m.type) {
+    case 'registered':
+      svc.retry = 0;
+      svc.registered = true;
+      svc.stun = Array.isArray(m.stun) ? m.stun.filter((u) => typeof u === 'string') : [];
+      setServiceState('online');
+      break;
+    case 'error':
+      if (m.reason === 'bad-secret') {
+        setServiceState('error', 'The service already knows this PC with a different key.');
+        if (svc.ws) svc.ws.close();
+      }
+      break;
+    case 'invite': {
+      const w = svc.inviteWaiters.shift();
+      if (w) w(m);
+      break;
+    }
+    case 'redeem': {
+      // A friend's TV typed an invite code we made: remember it, with its own key.
+      const deviceId = String(m.deviceId || '').slice(0, 64);
+      const name = String(m.name || 'TV').replace(/[\r\n]/g, ' ').slice(0, 60);
+      if (!deviceId) return svcSend({ type: 'redeem-result', rid: m.rid, ok: false, reason: 'bad-device' });
+      const token = crypto.randomBytes(32).toString('base64url');
+      allowed[deviceId] = { name, remote: true, tokenHash: sha256(token), added: new Date().toISOString() };
+      writeJson('allowed.json', allowed);
+      svcSend({ type: 'redeem-result', rid: m.rid, code: m.code, ok: true, token });
+      toRenderer('allowed-changed');
+      toRenderer('invite-used', { code: m.code, name });
+      if (tray && process.platform === 'win32') tray.displayBalloon({ title: APP_NAME, content: `${name} can now watch from their home.`, iconType: 'info' });
+      break;
+    }
+    case 'open': {
+      const a = allowed[m.deviceId];
+      if (!a || !a.remote || !sameHash(a.tokenHash, sha256(m.token || ''))) {
+        return svcSend({ type: 'reject', sid: m.sid, reason: 'unauthorized' });
+      }
+      const sid = String(m.sid);
+      const v = {
+        id: crypto.randomUUID(), sid, remote: true, ip: String(m.ip || 'internet'),
+        deviceId: m.deviceId, name: a.name, kind: 'tv', approved: false, open: true,
+        send: (msg) => { if (v.open) svcSend({ type: 'msg', sid, msg }); },
+        close: () => { if (!v.open) return; v.open = false; svcSend({ type: 'close', sid }); removeViewer(v); },
+        drop: () => { v.open = false; removeViewer(v); },
+        isOpen: () => v.open,
+      };
+      viewers.set(v.id, v);
+      svcSessions.set(sid, v);
+      svcSend({ type: 'accept', sid });
+      break;
+    }
+    case 'msg': {
+      const v = svcSessions.get(m.sid);
+      if (v && m.msg && typeof m.msg.type === 'string') onViewerMessage(v, m.msg);
+      break;
+    }
+    case 'close': {
+      const v = svcSessions.get(m.sid);
+      if (v) v.drop();
+      break;
+    }
+  }
 }
 
 // ---------- window + tray ----------
@@ -377,7 +560,10 @@ if (!gotLock) {
     app.setAppUserModelId('ai.esteef.esteefcast');
     settings = readJson('settings.json', {
       hostId: crypto.randomUUID(), name: os.hostname(), quality: '1080p60', audio: true, sourceId: null,
+      remoteEnabled: false, remoteKbps: 8000, serviceUrl: '',
     });
+    if (!settings.hostSecret) settings.hostSecret = crypto.randomBytes(32).toString('base64url');
+    if (TEST && env.ESTEEFCAST_REMOTE === '1') settings.remoteEnabled = true;
     writeJson('settings.json', settings);
     allowed = TEST ? {} : readJson('allowed.json', {});
     registerIpc();
@@ -386,8 +572,13 @@ if (!gotLock) {
     startDiscovery();
     createWindow();
     createTray();
+    serviceConnect();
     if (TEST) setTimeout(openTestWindows, 300);
   });
   app.on('before-quit', () => { quitting = true; });
+  // Tests run their own service with a throwaway certificate.
+  app.on('certificate-error', (event, _wc, _url, _err, _cert, callback) => {
+    if (TEST) { event.preventDefault(); callback(true); } else callback(false);
+  });
   app.on('window-all-closed', () => { /* stay in the tray */ });
 }

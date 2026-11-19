@@ -14,7 +14,7 @@ An Esteef.Ai product. Share a PC's screen and sound to a TV, at home or at a fri
 | Host (`host/`) | Portable Windows exe in the system tray. Captures a screen or window plus system audio, encodes, serves viewers. | Electron, WebRTC, hardware H.264 (NVENC / AMF / QSV via Media Foundation) |
 | TV viewer (`tv/`) | Android TV APK. Full-screen player, works with the D-pad. | Kotlin, libwebrtc (`stream-webrtc-android`), MediaCodec H.264 decode |
 | Web viewer (`host/web/`) | Viewer page the host serves at `http://<pc>:47801/`. | Browser WebRTC |
-| Rendezvous (phase 2) | Small service that introduces a remote viewer to a host. It passes connection details only, never video. | Node |
+| Service (`rendezvous/`) | Introduces TVs away from home to PCs: invite codes, presence, a relay for connection setup, and STUN. Never carries video. | Node + `ws`, TLS with a pinned self-signed certificate |
 
 ## Home network flow (built)
 1. The TV broadcasts `ESTEEFCAST_DISCOVER` on UDP 47800. Each host replies with its name, port and what it is sharing.
@@ -32,11 +32,21 @@ An Esteef.Ai product. Share a PC's screen and sound to a TV, at home or at a fri
 | viewer | `answer {sdp}`, `request` | Answer an offer, or ask for a fresh one after a failure |
 | both | `candidate {candidate, sdpMid, sdpMLineIndex}` | ICE candidates |
 
-## Remote flow (phase 2, planned)
-1. The host keeps a connection open to the rendezvous service and asks its router to open a port (UPnP / NAT-PMP).
-2. "Invite" on the host makes a code like `BEAR-4821`. The friend enters it in their TV app once, and the host is saved to their list.
-3. The rendezvous service passes the connection details between the two. STUN finds public addresses, and the video goes peer-to-peer.
-4. When both ends block direct connections, show a clear "can't connect directly" message. A TURN relay is a possible later addition.
+## Remote flow (phase 2, built)
+1. With **Let invited friends watch from their home** turned on, the PC keeps a connection to the service (`wss://<service>:47900/host`). It registers with its host ID and a secret only it knows.
+2. **Create invite code** makes a code like `BEAR-4821`. It works once, within 24 hours.
+3. The friend's TV chooses **Add a friend's PC** and sends the code (`/viewer`, `redeem`). The PC creates a 256-bit key for that TV and keeps only its hash. The TV stores the key.
+4. To watch, the TV sends `open {hostId, deviceId, token}`. The PC checks the key and accepts. After that, the service passes the normal protocol messages (`hello`, `offer`, `answer`, `candidate`, …) both ways without reading them.
+5. Both sides use the service's STUN (UDP 3478) to learn their public addresses, so the video goes straight from PC to TV.
+6. If both networks block direct connections, the TV says so plainly. A TURN relay and UPnP port mapping are possible later additions.
+
+Each friend's stream is limited by the PC's **Upload limit per friend** (default 8 Mbps), and starts at 2.5 Mbps.
+
+### Service security
+- TLS on every connection. The apps trust only the certificate they ship with (`host/assets/service-cert.pem`, `tv/.../res/raw/service_cert.pem`).
+- The service stores a hash of each PC's secret. Another machine can't take over a PC's ID.
+- Codes: single use, 24 hours, at most 10 open per PC, 10 tries per minute per IP address.
+- Keys for friends' TVs exist only on the TV and, hashed, on the PC. **Forget** on the PC removes access.
 
 ## Video and quality
 - One WebRTC connection per viewer, so each viewer gets its own bitrate.
@@ -54,6 +64,6 @@ An Esteef.Ai product. Share a PC's screen and sound to a TV, at home or at a fri
 
 ## Phases
 1. Home network: host and viewer, discovery, 1080p60 with a 4K option, audio, multiple TVs, Allow prompt, address fallback. **Built (v0.1.0).**
-2. Remote viewing: rendezvous service, invites, UPnP, quality that adapts to each viewer.
+2. Remote viewing: service, invite codes, friends' TVs, upload limit. **Built (v0.2.0).** Next: UPnP, TURN.
 3. Packaging: a real APK signing key, code-signed exe, sideload guide, a cap on how many viewers can watch at once.
 4. Roku watch-only app (BrightScript, low-latency HLS from the host, 1–3 s delay).

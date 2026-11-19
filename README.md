@@ -27,6 +27,14 @@ On the TV, press **OK** while watching to show the stream stats. Press **Back** 
 
 Any browser on your network can also watch, at `http://<your-pc-address>:47801/`.
 
+### Friends watching from their home
+
+1. **PC:** under *Friends outside your home*, turn on **Let invited friends watch from their home**.
+2. **PC:** press **Create invite code** and send your friend the code, for example `BEAR-4821`. It works once, within 24 hours.
+3. **Friend's TV:** open EsteefCast, choose **Add a friend's PC** and type the code. Your PC then appears in their list.
+
+The video goes straight from your PC to their TV. The EsteefCast service only introduces the two and never sees the picture. Each friend uses some of your internet upload; set the limit under **Upload limit per friend**. To stop a friend watching, press **Forget** next to their TV.
+
 ## Installing the APK on a TV
 
 **Fire TV**
@@ -59,6 +67,8 @@ The PC encodes in hardware where it can (NVIDIA NVENC, AMD AMF, Intel Quick Sync
 | TCP 47801 | Connection setup and the web viewer |
 | UDP (dynamic) | Video and audio (WebRTC, encrypted) |
 
+The EsteefCast service (only for friends outside the home) uses TCP 47900 and UDP 3478. See `rendezvous/`.
+
 ## Building from source
 
 **PC app** (Node 20+):
@@ -67,6 +77,7 @@ cd host
 npm install
 npm start          # run it
 npm test           # end-to-end test: discovery, 60 fps H.264, stereo audio
+npm run test:remote  # friends outside the home, through a local copy of the service
 npm run dist       # build the portable exe into host/dist
 ```
 
@@ -76,4 +87,6 @@ cd tv
 gradlew assembleRelease
 ```
 
-See [DESIGN.md](DESIGN.md) for how it works and what's planned: watching from a friend's house, a Roku app, and more.
+**Service** (Node 18+): see `rendezvous/`. Make a certificate with `make-cert.sh`, then put `cert.pem` into both apps (see the script) and run `start-service.bat`.
+
+See [DESIGN.md](DESIGN.md) for how it works and what's planned.

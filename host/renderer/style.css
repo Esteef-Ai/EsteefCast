@@ -78,3 +78,13 @@ select, input[type="text"], input:not([type]) {
 
 .addresses { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 14px; }
 .addresses code { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; font: 600 16px/1 Consolas, monospace; color: var(--brass); letter-spacing: .03em; }
+
+.secondary { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--brass-dim); background: none; color: var(--brass); font-weight: 600; }
+.secondary:disabled { border-color: var(--line); color: var(--muted); cursor: default; }
+.invite { margin-top: 12px; text-align: center; }
+.invite code { display: block; background: var(--panel-2); border: 1px dashed var(--brass-dim); border-radius: 8px; padding: 14px; font: 700 26px/1 Consolas, monospace; letter-spacing: .12em; color: var(--brass); user-select: all; }
+.top-gap { margin-top: 14px; }
+.advanced summary { color: var(--muted); font-size: 12px; cursor: pointer; margin-bottom: 8px; }
+.advanced input { width: 100%; }
+.note.ok { color: var(--green); }
+.tag { font-size: 11px; color: var(--brass); border: 1px solid var(--brass-dim); border-radius: 4px; padding: 0 5px; margin-left: 6px; font-weight: 400; }

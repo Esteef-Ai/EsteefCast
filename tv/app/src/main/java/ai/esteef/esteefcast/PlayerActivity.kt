@@ -50,8 +50,12 @@ class PlayerActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val http = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).pingInterval(5, TimeUnit.SECONDS).build()
 
-    private lateinit var ip: String
+    private var ip = ""
     private var port = DEFAULT_PORT
+    private var remoteId: String? = null
+    private var token: String? = null
+    private var stun: List<String> = emptyList()
+    private var opened = false
     private var hostName = "your PC"
 
     private lateinit var renderer: SurfaceViewRenderer
@@ -79,7 +83,10 @@ class PlayerActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
 
-        ip = intent.getStringExtra("ip") ?: run { finish(); return }
+        remoteId = intent.getStringExtra("remoteId")
+        token = intent.getStringExtra("token")
+        ip = intent.getStringExtra("ip") ?: ""
+        if (remoteId == null && ip.isEmpty()) { finish(); return }
         port = intent.getIntExtra("port", DEFAULT_PORT)
         hostName = intent.getStringExtra("name") ?: hostName
 
@@ -140,19 +147,45 @@ class PlayerActivity : Activity() {
     }
 
     // ---------- signaling ----------
+    private fun hello(): String = JSONObject().put("type", "hello").put("kind", "tv")
+        .put("deviceId", Identity.deviceId(this))
+        .put("name", Identity.deviceName(this)).toString()
+
     private fun connect() {
         if (closed) return
-        val req = Request.Builder().url("ws://$ip:$port/ws").build()
-        ws = http.newWebSocket(req, object : WebSocketListener() {
+        val remote = remoteId != null
+        // At home: straight to the PC. Away: through the EsteefCast service, which passes messages both ways.
+        val req = if (remote) Service.viewerRequest(this) else Request.Builder().url("ws://$ip:$port/ws").build()
+        val client = if (remote) Service.http(this) else http
+        opened = false
+        ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                val hello = JSONObject().put("type", "hello").put("kind", "tv")
-                    .put("deviceId", Identity.deviceId(this@PlayerActivity))
-                    .put("name", Identity.deviceName(this@PlayerActivity))
-                webSocket.send(hello.toString())
+                if (remote) {
+                    webSocket.send(JSONObject().put("type", "open").put("hostId", remoteId).put("token", token)
+                        .put("deviceId", Identity.deviceId(this@PlayerActivity))
+                        .put("name", Identity.deviceName(this@PlayerActivity)).toString())
+                } else webSocket.send(hello())
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val msg = try { JSONObject(text) } catch (_: Exception) { return }
-                main.post { if (webSocket === ws) onSignal(msg) }
+                main.post {
+                    if (webSocket !== ws) return@post
+                    when (msg.optString("type")) {
+                        "opened" -> {
+                            opened = true
+                            val arr = msg.optJSONArray("stun")
+                            stun = (0 until (arr?.length() ?: 0)).map { arr!!.getString(it) }
+                            show("Contacting $hostName…")
+                            webSocket.send(hello())
+                        }
+                        "relay-error" -> {
+                            val reason = msg.optString("reason")
+                            show(Service.reason(reason, hostName) + if (reason == "offline") "\nTrying again…" else "")
+                            if (reason == "unauthorized") closed = true
+                        }
+                        else -> onSignal(msg)
+                    }
+                }
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = lost(webSocket)
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = lost(webSocket)
@@ -164,8 +197,11 @@ class PlayerActivity : Activity() {
             if (socket !== ws || closed) return@post
             ws = null
             closePeer()
-            show("Can't reach $hostName.\nMake sure EsteefCast is running on the PC. Trying again…")
-            main.postDelayed({ connect() }, 2500)
+            if (remoteId != null && !opened && overlay.visibility == View.VISIBLE && message.text.contains("Trying again")) {
+                // keep the reason the service gave
+            } else if (remoteId != null) show("Can't reach the EsteefCast service.\nCheck this TV's internet connection. Trying again…")
+            else show("Can't reach $hostName.\nMake sure EsteefCast is running on the PC. Trying again…")
+            main.postDelayed({ connect() }, if (remoteId != null) 5000 else 2500)
         }
     }
 
@@ -196,7 +232,9 @@ class PlayerActivity : Activity() {
     private fun onOffer(sdp: String) {
         closePeer()
         val f = factory ?: return
-        val config = PeerConnection.RTCConfiguration(emptyList()).apply {
+        // Away: STUN lets both sides find their public address so the video can go direct.
+        val ice = if (remoteId != null && stun.isNotEmpty()) listOf(PeerConnection.IceServer.builder(stun).createIceServer()) else emptyList()
+        val config = PeerConnection.RTCConfiguration(ice).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
@@ -256,7 +294,7 @@ class PlayerActivity : Activity() {
                 when (state) {
                     PeerConnection.PeerConnectionState.CONNECTED -> overlay.visibility = View.GONE
                     PeerConnection.PeerConnectionState.FAILED -> {
-                        show("The picture dropped. Reconnecting…")
+                        show(if (remoteId != null) "Can't get a direct connection to $hostName's network.\nSome internet providers block this. Trying again…" else "The picture dropped. Reconnecting…")
                         main.postDelayed({ send(JSONObject().put("type", "request")) }, 1500)
                     }
                     else -> {}
@@ -324,7 +362,7 @@ class PlayerActivity : Activity() {
             line = String.format(
                 "%s×%s  %s fps  %.1f Mbps\n%s  %s\nbuffer %.0f ms  dropped %s\n%s",
                 m["frameWidth"] ?: "?", m["frameHeight"] ?: "?", (m["framesPerSecond"] as? Number)?.toInt() ?: 0, mbps,
-                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, "$hostName ($ip)",
+                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, if (remoteId != null) "$hostName (away)" else "$hostName ($ip)",
             )
         }
         if (line.isNotEmpty()) {
