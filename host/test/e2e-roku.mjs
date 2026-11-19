@@ -56,11 +56,26 @@ try {
   check('video is H.264 High', v && /High/.test(v.profile), v ? `${v.profile} ${v.width}x${v.height} ${v.r_frame_rate}` : JSON.stringify(streams));
   check('audio is AAC stereo 48 kHz', a && a.channels === 2 && a.sample_rate === '48000', a ? `${a.sample_rate} Hz ${a.channels} ch` : 'none');
 
-  // Decode 8 s of the live stream: count errors, real frame rate, loudness.
-  const dec = await run('ffmpeg', ['-hide_banner', '-v', 'error', '-stats_period', '1', '-i', url, '-t', '8', '-af', 'volumedetect', '-f', 'null', '-'], { timeout: 90000 }).catch((e) => e);
+  // Decode 8 s of the live stream and count errors. ffmpeg's null output writes on a
+  // 1/60 s clock, so two captured frames 14 ms apart round to the same tick and it
+  // prints "non monotonically increasing dts to muxer" for a clean stream; that line
+  // is ignored here and the stream's own timestamps are checked below instead.
+  const dec = await run('ffmpeg', ['-hide_banner', '-v', 'error', '-stats_period', '1', '-i', url, '-t', '8', '-fps_mode', 'passthrough', '-f', 'null', '-'], { timeout: 90000 }).catch((e) => e);
   const errText = String(dec.stderr || '');
-  const errors = errText.split('\n').filter((l) => /error|corrupt|non-existing|missing|discontinuity|Invalid|concealing/i.test(l) && !/mean_volume|max_volume/.test(l));
+  const errors = errText.split('\n').filter((l) => /error|corrupt|non-existing|missing|discontinuity|Invalid|concealing/i.test(l) && !/mean_volume|max_volume|dts to muxer/.test(l));
   check('8 s decode without errors', errors.length === 0, errors.slice(0, 3).join(' / ') || 'clean');
+
+  const pk = await run('ffprobe', ['-v', 'error', '-read_intervals', '%+4', '-show_entries', 'packet=stream_index,dts', '-of', 'csv=p=0', url], { timeout: 60000, maxBuffer: 1 << 26 });
+  const lastDts = {};
+  let backwards = 0, packets = 0;
+  for (const line of pk.stdout.split(/\r?\n/)) {
+    const [si, d] = line.split(',').map(Number);
+    if (!Number.isFinite(d)) continue;
+    packets++;
+    if (lastDts[si] != null && d <= lastDts[si]) backwards++;
+    lastDts[si] = d;
+  }
+  check('timestamps always increase', packets > 100 && backwards === 0, `${backwards} of ${packets} packets out of order`);
 
   const count = await run('ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-read_intervals', '%+5', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', url], { timeout: 60000 });
   const frames = parseInt(count.stdout, 10);

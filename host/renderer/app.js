@@ -192,10 +192,12 @@ async function setVideoParams(pc, q, v) {
       p.encodings[0].maxFramerate = q.fps;
       p.encodings[0].networkPriority = 'high';
       p.encodings[0].priority = 'high';
-      // 'maintain-resolution' at home halved Fire TV dropped frames (162 -> 90 per 30 s)
-      // but stalled at 0 fps in 2 of ~10 runs, so it stays a test switch
-      // (ESTEEFCAST_TUNE {"degrade":"maintain-resolution"}) until that is understood.
-      p.degradationPreference = TUNE.degrade || 'maintain-framerate';
+      // At home, keep full resolution: every resolution switch costs the Fire TV
+      // 30-40 dropped frames. Measured 5+5 runs on a Fire TV Stick (2026-11-19):
+      // dropped 255 -> 92 per 30 s, seconds under 45 fps 8.0 -> 3.8, no stalls
+      // (the earlier "stalls" were a test-script artifact). Friends away keep
+      // maintain-framerate: their upload may be too thin for full resolution.
+      p.degradationPreference = TUNE.degrade || (v && v.remote ? 'maintain-framerate' : 'maintain-resolution');
     } else if (kind === 'audio') {
       p.encodings[0].maxBitrate = 510000;
       p.encodings[0].networkPriority = 'high';

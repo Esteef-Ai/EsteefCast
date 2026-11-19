@@ -6,22 +6,38 @@
 export MSYS_NO_PATHCONV=1
 ADB="${ADB:-adb}"
 D="$1"; WANT="$2"; WAIT="${3:-20}"
-"$ADB" -s "$D" shell am force-stop ai.esteef.esteefcast
-"$ADB" -s "$D" logcat -c
-"$ADB" -s "$D" shell am start -W -n ai.esteef.esteefcast/.MainActivity >/dev/null
+a() { "$ADB" -s "$D" "$@"; }
+
+a shell input keyevent WAKEUP
+a shell am force-stop ai.esteef.esteefcast
+a logcat -c
+a shell am start -W -n ai.esteef.esteefcast/.MainActivity >/dev/null
 sleep 6
-"$ADB" -s "$D" shell uiautomator dump /sdcard/ec.xml >/dev/null
-# Host items are the focusable rows before "Enter address"; find which one has our text.
-idx=$("$ADB" -s "$D" shell cat /sdcard/ec.xml | grep -o 'text="[^"]*"' | grep -v 'text=""' | awk -v want="$WANT" '
-  /Choose a PC|PCs? found|EsteefCast"|by Esteef/ {next}
-  /Enter address/ {exit}
-  { n++; if (index($0, want)) { print int((n-1)/2); exit } }')
-[ -z "$idx" ] && { echo "PC with '$WANT' not listed"; exit 1; }
-echo "selecting row $idx"
-# Focus starts on the last PC used, so go to the top first.
-for _ in 1 2 3 4 5 6; do "$ADB" -s "$D" shell input keyevent DPAD_UP; done
-i=0; while [ "$i" -lt "$idx" ]; do "$ADB" -s "$D" shell input keyevent DPAD_DOWN; i=$((i+1)); done
-"$ADB" -s "$D" shell input keyevent DPAD_CENTER
+
+# The list can re-sort while PCs come and go, so move focus one row at a time
+# and check the highlighted row's text before pressing OK.
+focused_text() {
+  a shell uiautomator dump /sdcard/ec.xml >/dev/null 2>&1
+  # the focused row is a container; print the text of the nodes inside it
+  a shell cat /sdcard/ec.xml | tr '>' '\n' | awk '
+    /focused="true"/ { on = 1; depth = 0 }
+    on && /<node/ { if (match($0, /text="[^"]*"/)) print substr($0, RSTART + 6, RLENGTH - 7) }
+    on && /<\/node/ { depth++; if (depth > 2) exit }'
+}
+
+for _ in 1 2 3 4 5 6; do a shell input keyevent DPAD_UP; done
+found=""
+for step in 0 1 2 3 4 5 6; do
+  t=$(focused_text)
+  case "$t" in
+    *"$WANT"*) found=1; break ;;
+    *"Enter address"*) break ;;
+  esac
+  a shell input keyevent DPAD_DOWN
+done
+if [ -z "$found" ]; then echo "PC with '$WANT' not listed"; exit 1; fi
+echo "selected: $(echo "$t" | tr '\n' ' ')"
+a shell input keyevent DPAD_CENTER
 sleep "$WAIT"
-P=$("$ADB" -s "$D" shell pidof ai.esteef.esteefcast)
-"$ADB" -s "$D" logcat -d -v time | grep "($P)\|( $P)" | grep -E "I/EsteefCast|Frames received" | cut -c1-230
+# Read by tag (the log was cleared at the start, so every line is from this run).
+a logcat -d -v time -s EsteefCast:I | grep "I/EsteefCast" | cut -c1-230

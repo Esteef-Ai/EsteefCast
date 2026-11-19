@@ -271,7 +271,9 @@ class HlsOutput {
 
   onVideo(chunk) {
     if (!this.running) return;
-    const pts = this.clock('video', chunk.timestamp);
+    // Strictly increasing: capture can deliver two frames with the same timestamp.
+    const pts = Math.max(this.clock('video', chunk.timestamp), (this.lastVideoPts || 0) + 1);
+    this.lastVideoPts = pts;
     const key = chunk.type === 'key';
     if (this.segStartPts == null && !key) return; // a segment must start on a keyframe
     if (key && (this.segStartPts == null || pts - this.segStartPts >= SEGMENT_SECONDS * 90000 * 0.9)) {

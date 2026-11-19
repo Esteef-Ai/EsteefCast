@@ -94,6 +94,11 @@ for (let i = 0; i < runs; i++) {
     const s = score(await runOnce(tune));
     (all[name] ||= []).push(s);
     console.log(`${name} run ${i + 1}:`, JSON.stringify(s));
+    // The PC's own view of the same run, so a missing TV log can't pass for a stall.
+    const hs = lastHost.filter((h) => h.state === 'connected' && h.mbps != null).slice(3);
+    const pcFps = hs.length ? +(hs.reduce((t, h) => t + (h.fps || 0), 0) / hs.length).toFixed(1) : 0;
+    console.log(`  PC side: ${hs.length} s connected, mean ${pcFps} fps sent, ${(hs[hs.length - 1] || {}).mbps?.toFixed?.(1) ?? 0} Mbps at the end`);
+    if (!s) console.log('  TV log: ' + (lastTv.split(/\r?\n/).find((l) => /selected|not listed/.test(l)) || 'nothing captured'));
     if (!s || s.fps < 20) { // a stall: keep both sides' evidence
       const f = path.join(os.tmpdir(), `ecast-stall-${name}-${i + 1}.json`);
       fs.writeFileSync(f, JSON.stringify({ host: lastHost, tv: lastTv.split(/\r?\n/).filter((l) => /EsteefCast|Frames received/.test(l)) }, null, 1));
