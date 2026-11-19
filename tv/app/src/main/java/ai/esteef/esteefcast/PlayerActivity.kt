@@ -138,7 +138,7 @@ class PlayerActivity : Activity() {
             .createAudioDeviceModule()
         factory = PeerConnectionFactory.builder()
             .setAudioDeviceModule(adm)
-            .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
+            .setVideoDecoderFactory(TvDecoderFactory(egl.eglBaseContext))
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, false, false))
             .createPeerConnectionFactory()
         renderer.init(egl.eglBaseContext, null)
@@ -227,6 +227,7 @@ class PlayerActivity : Activity() {
             "offer" -> onOffer(msg.optString("sdp"))
             "candidate" -> {
                 val c = IceCandidate(msg.optString("sdpMid"), msg.optInt("sdpMLineIndex"), msg.optString("candidate"))
+                Log.i(TAG, "remote candidate " + c.sdp.take(90))
                 if (remoteSet) pc?.addIceCandidate(c) else pendingCandidates.add(c)
             }
             "stopped" -> { closePeer(); show("$hostName stopped sharing.\nIt will appear here when it starts again.") }
@@ -283,6 +284,7 @@ class PlayerActivity : Activity() {
 
     private val observer = object : PeerConnection.Observer {
         override fun onIceCandidate(c: IceCandidate) {
+            Log.i(TAG, "local candidate " + c.sdp.take(90))
             main.post { send(JSONObject().put("type", "candidate").put("candidate", c.sdp).put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex)) }
         }
         override fun onTrack(transceiver: RtpTransceiver) {
@@ -351,6 +353,20 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** The network route ICE picked, e.g. "192.168.0.48 -> 192.168.0.174 host". */
+    private fun route(report: RTCStatsReport): String {
+        val all = report.statsMap
+        for (s in all.values) {
+            if (s.type != "transport") continue
+            val pair = all[s.members["selectedCandidatePairId"] as? String ?: continue] ?: continue
+            val l = all[pair.members["localCandidateId"] as? String ?: continue]?.members ?: continue
+            val r = all[pair.members["remoteCandidateId"] as? String ?: continue]?.members ?: continue
+            val rtt = (pair.members["currentRoundTripTime"] as? Number)?.toDouble()?.let { " %.0f ms".format(it * 1000) } ?: ""
+            return "${l["address"]} -> ${r["address"]}:${r["port"]} ${r["candidateType"]}$rtt"
+        }
+        return "no route yet"
+    }
+
     private fun showStats(report: RTCStatsReport) {
         var line = ""
         for (s in report.statsMap.values) {
@@ -365,9 +381,9 @@ class PlayerActivity : Activity() {
             val codecId = m["codecId"] as? String
             val codec = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String } ?: ""
             line = String.format(
-                "%s×%s  %s fps  %.1f Mbps\n%s  %s\nbuffer %.0f ms  dropped %s\n%s",
+                "%s×%s  %s fps  %.1f Mbps\n%s  %s\nbuffer %.0f ms  dropped %s\n%s\n%s",
                 m["frameWidth"] ?: "?", m["frameHeight"] ?: "?", (m["framesPerSecond"] as? Number)?.toInt() ?: 0, mbps,
-                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, if (remoteId != null) "$hostName (away)" else "$hostName ($ip)",
+                codec.removePrefix("video/"), m["decoderImplementation"] ?: "", buffer, m["framesDropped"] ?: 0, if (remoteId != null) "$hostName (away)" else "$hostName ($ip)", route(report),
             )
         }
         if (line.isNotEmpty()) {

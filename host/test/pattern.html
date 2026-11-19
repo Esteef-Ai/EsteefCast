@@ -14,6 +14,8 @@ const c = document.getElementById('c');
 const g = c.getContext('2d');
 let frame = 0;
 const noise = document.createElement('canvas');
+// ?static=1 draws one frame and stops, like an idle desktop.
+const STATIC = new URLSearchParams(location.search).get('static') === '1';
 function draw() {
   c.width = innerWidth; c.height = innerHeight;
   const w = c.width, h = c.height;
@@ -36,7 +38,7 @@ function draw() {
   g.fillStyle = '#e4e0d8'; g.font = `bold ${Math.round(h / 6)}px Consolas, monospace`;
   g.fillText(String(frame), w / 20, h / 4);
   frame++;
-  requestAnimationFrame(draw);
+  if (!STATIC) requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 try {

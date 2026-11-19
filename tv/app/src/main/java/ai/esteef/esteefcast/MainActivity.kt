@@ -192,10 +192,10 @@ class MainActivity : Activity() {
         var toFocus: View? = null
         for (h in sorted) {
             val sub = when {
-                h.remote && !h.reachable -> "Friend's PC · off right now (hold OK to remove)"
+                h.remote && !h.reachable -> "Friend's PC · off right now (press ☰ to remove)"
                 h.remote && h.sharing -> "Friend's PC · sharing now${if (h.title.isNotBlank()) ": ${h.title}" else ""}"
                 h.remote -> "Friend's PC · online, not sharing yet"
-                h.manual && !h.reachable -> "${h.ip} · not answering right now (hold OK to remove)"
+                h.manual && !h.reachable -> "${h.ip} · not answering right now (press ☰ to remove)"
                 h.sharing -> "Sharing now${if (h.title.isNotBlank()) ": ${h.title}" else ""}"
                 else -> "Online · not sharing yet"
             }
@@ -208,6 +208,15 @@ class MainActivity : Activity() {
             if (h.key == focusedKey) toFocus = v
         }
         (toFocus ?: list.getChildAt(0))?.requestFocus()
+    }
+
+    // The remote's menu (☰) button removes a PC you added by address or invite code.
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_MENU) {
+            val h = (currentFocus?.tag as? String)?.let { hosts[it] }
+            if (h != null && (h.manual || h.remote)) { confirmRemove(h); return true }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun open(h: Host) {

@@ -255,6 +255,7 @@ async function onSignal({ id, msg }) {
       const q = QUALITY[$('quality').value] || QUALITY['1080p60'];
       const start = v.remote ? Math.min(2500, viewerKbps(v, q)) : Math.round(q.kbps * 0.6);
       await v.pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(msg.sdp, start) });
+      v.lastAnswer = msg.sdp;
     } else if (msg.type === 'candidate' && msg.candidate) {
       await v.pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.sdpMid, sdpMLineIndex: msg.sdpMLineIndex });
     } else if (msg.type === 'stats') {
@@ -276,9 +277,25 @@ async function pollStats() {
       let codec = '';
       const codecs = {};
       report.forEach((r) => { if (r.type === 'codec') codecs[r.id] = r.mimeType; });
+      let route = '';
+      let fmtp = '';
+      const cand = {};
+      report.forEach((r) => { if (r.type === 'local-candidate' || r.type === 'remote-candidate') cand[r.id] = r; });
       report.forEach((r) => {
-        if (r.type === 'outbound-rtp' && r.kind === 'video') { out = r; codec = (codecs[r.codecId] || '').replace('video/', ''); }
-        if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded' && r.currentRoundTripTime != null) rtt = r.currentRoundTripTime;
+        if (r.type === 'outbound-rtp' && r.kind === 'video') {
+          out = r;
+          codec = (codecs[r.codecId] || '').replace('video/', '');
+          const c = report.get(r.codecId);
+          fmtp = c ? c.sdpFmtpLine || '' : '';
+        }
+        if (r.type === 'transport' && r.selectedCandidatePairId) {
+          const pair = report.get(r.selectedCandidatePairId);
+          if (pair) {
+            if (pair.currentRoundTripTime != null) rtt = pair.currentRoundTripTime;
+            const l = cand[pair.localCandidateId]; const rc = cand[pair.remoteCandidateId];
+            if (l && rc) route = `${l.address}:${l.port} ${l.candidateType}/${l.protocol} -> ${rc.address}:${rc.port} ${rc.candidateType}`;
+          }
+        }
       });
       if (!out) continue;
       const now = out.timestamp;
@@ -288,12 +305,14 @@ async function pollStats() {
       v.stats = {
         w: out.frameWidth || 0, h: out.frameHeight || 0, fps: Math.round(out.framesPerSecond || 0),
         mbps, codec, encoder: out.encoderImplementation || '', limit: out.qualityLimitationReason || 'none',
-        rtt: rtt == null ? null : Math.round(rtt * 1000),
+        rtt: rtt == null ? null : Math.round(rtt * 1000), route, fmtp,
+        packetsSent: out.packetsSent, nacks: out.nackCount, plis: out.pliCount,
       };
     } catch {}
   }
   renderViewers();
   window.__ecastStats = [...state.viewers.values()].map((v) => ({ id: v.id, name: v.name, state: v.pc ? v.pc.connectionState : 'idle', ...v.stats }));
+  window.__ecastDebug = [...state.viewers.values()].map((v) => ({ name: v.name, answer: v.lastAnswer || '', offer: v.pc && v.pc.localDescription ? v.pc.localDescription.sdp : '' }));
 }
 
 // ---------- rendering ----------

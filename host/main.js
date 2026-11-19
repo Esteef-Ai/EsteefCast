@@ -548,7 +548,7 @@ function openTestWindows() {
       webPreferences: { backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' },
     });
     // The packaged app has no test folder; the test passes the file's path in.
-    pat.loadFile(env.ESTEEFCAST_PATTERN_FILE || path.join(__dirname, 'test', 'pattern.html'));
+    pat.loadFile(env.ESTEEFCAST_PATTERN_FILE || path.join(__dirname, 'test', 'pattern.html'), { query: env.ESTEEFCAST_PATTERN_STATIC === '1' ? { static: '1' } : {} });
   }
   if (env.ESTEEFCAST_TEST_VIEWER === '1') {
     const viewer = new BrowserWindow({
